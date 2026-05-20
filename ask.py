@@ -191,62 +191,62 @@ class ImprovedRAG:
             
             return "\n\n" + "="*50 + "\n\n".join(parts)
         
-        def answer(self, query: str, verbose: bool = False) -> str:
-            """Main RAG pipeline"""
-            # Hybrid retrieval
-            vector_docs = self.retrieve_vector(query, k=6)
-            bm25_docs = self.retrieve_bm25(query, k=6)
-            merged = self.merge_results(vector_docs, bm25_docs)
-            
-            if verbose:
-                print("\n=== HYBRID RETRIEVAL ===")
-                for i, doc in enumerate(merged[:5], 1):
-                    print(f"{i}. [{doc.source}] Score: {doc.hybrid_score:.3f}")
-                    print(f"   {doc.content[:100]}...\n")
-            
-            # Graph expansion
-            top_merged = merged[:4]
-            expanded = self.expand_with_graph(top_merged, max_neighbors=2, max_chunks_per_neighbor=2)
-            
-            if verbose:
-                print(f"\n=== GRAPH EXPANSION ===")
-                print(f"Expanded from {len(top_merged)} to {len(expanded)} chunks")
-            
-            # Reranking
-            reranked = self.rerank(query, expanded, top_k=3)
-            
-            if verbose:
-                print("\n=== RERANKED RESULTS ===")
-                for i, doc in enumerate(reranked, 1):
-                    print(f"{i}. [{doc.source}] Rerank: {doc.rerank_score:.3f}")
-                    print(f"   {doc.content[:100]}...\n")
-            
-            # context
-            context = self.build_context(reranked)
-            
-            prompt = f"""You are a strict retrieval-based assistant.
-
-                    Rules:
-                    1. Answer ONLY using the provided context.
-                    2. Do NOT use external knowledge.
-                    3. Do NOT hallucinate.
-                    4. If answer is not explicitly present, reply EXACTLY:
-                    "I could not find this information in the Obsidian vault."
-
-                    Context:
-                    {context}
-
-                    Question: {query}
-
-                    Answer:"""
+    def answer(self, query: str, verbose: bool = False) -> str:
+        """Main RAG pipeline"""
+        # Hybrid retrieval
+        vector_docs = self.retrieve_vector(query, k=6)
+        bm25_docs = self.retrieve_bm25(query, k=6)
+        merged = self.merge_results(vector_docs, bm25_docs)
         
-            response = ollama.chat(
-                model="qwen3:8b",
-                options={"temperature": 0},
-                messages=[{"role": "user", "content": prompt}]
-            )
+        if verbose:
+            print("\n=== HYBRID RETRIEVAL ===")
+            for i, doc in enumerate(merged[:5], 1):
+                print(f"{i}. [{doc.source}] Score: {doc.hybrid_score:.3f}")
+                print(f"   {doc.content[:100]}...\n")
         
-            return response["message"]["content"]
+        # Graph expansion
+        top_merged = merged[:4]
+        expanded = self.expand_with_graph(top_merged, max_neighbors=2, max_chunks_per_neighbor=2)
+        
+        if verbose:
+            print(f"\n=== GRAPH EXPANSION ===")
+            print(f"Expanded from {len(top_merged)} to {len(expanded)} chunks")
+        
+        # Reranking
+        reranked = self.rerank(query, expanded, top_k=3)
+        
+        if verbose:
+            print("\n=== RERANKED RESULTS ===")
+            for i, doc in enumerate(reranked, 1):
+                print(f"{i}. [{doc.source}] Rerank: {doc.rerank_score:.3f}")
+                print(f"   {doc.content[:100]}...\n")
+        
+        # context
+        context = self.build_context(reranked)
+        
+        prompt = f"""You are a strict retrieval-based assistant.
+
+                Rules:
+                1. Answer ONLY using the provided context.
+                2. Do NOT use external knowledge.
+                3. Do NOT hallucinate.
+                4. If answer is not explicitly present, reply EXACTLY:
+                "I could not find this information in the Obsidian vault."
+
+                Context:
+                {context}
+
+                Question: {query}
+
+                Answer:"""
+    
+        response = ollama.chat(
+            model="qwen3:8b",
+            options={"temperature": 0},
+            messages=[{"role": "user", "content": prompt}]
+        )
+    
+        return response["message"]["content"]
     
     def show_neighbors(self, note_query: str, depth: int = 1):
         """Show graph neighbors of a note"""
