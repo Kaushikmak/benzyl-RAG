@@ -4,3 +4,4 @@ bm25.pkl
 graph.pkl
 vectorstore/
 node_vectorstore/
+claude/
