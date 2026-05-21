@@ -1,7 +1,27 @@
-obsidianrag/
-obsidianVault/
-bm25.pkl
-graph.pkl
+.venv/
+__pycache__/
+*.pyc
+
 vectorstore/
 node_vectorstore/
-claude/
+
+data/*.pkl
+
+.env
+
+obsidianVault/
+
+# Logs
+backend.log
+frontend.log
+ollama.log
+
+# Mac
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# SQLite
+conversations.db
