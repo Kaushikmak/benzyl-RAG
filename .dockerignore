@@ -1,0 +1,10 @@
+.venv
+__pycache__
+*.pyc
+
+vectorstore
+node_vectorstore
+
+data/*.pkl
+
+.git
