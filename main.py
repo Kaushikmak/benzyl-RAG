@@ -2,6 +2,7 @@ import argparse
 import sys
 import subprocess
 import logging
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,6 +37,16 @@ def main():
         logger.info("Starting Web App (Backend & Frontend)...")
         
         try:
+            web_dir = Path("web")
+            node_modules_dir = web_dir / "node_modules"
+            if not node_modules_dir.exists():
+                logger.info("Installing Next.js dependencies...")
+                subprocess.run(
+                    ["npm", "install"],
+                    cwd=str(web_dir),
+                    check=True,
+                )
+
             with open("backend.log", "w") as blog, open("frontend.log", "w") as flog:
                 logger.info("Starting FastAPI backend...")
                 backend = subprocess.Popen([sys.executable, "api.py"], stdout=blog, stderr=subprocess.STDOUT)
