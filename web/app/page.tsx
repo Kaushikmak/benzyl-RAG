@@ -427,7 +427,7 @@ export default function Page() {
             </div>
           </div>
 
-          <div className="sidebar-block">
+          <div className="sidebar-block sessions-block">
             <div className="muted">Previous Sessions</div>
             <div className="session-list">
               {sessions.map((s) => (
@@ -514,7 +514,7 @@ export default function Page() {
 
         <aside className="vault-sidebar card">
           <h3>Vault File Browser</h3>
-          <div className="tree-scroll">
+          <div className="tree-scroll vault-scroll">
             {vaultTree?.root ? (
               <ExplorerNode
                 node={vaultTree.root}

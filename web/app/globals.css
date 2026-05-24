@@ -15,6 +15,8 @@ body {
   color: var(--fg);
   background: radial-gradient(circle at 20% 0%, #fafafa 0%, #ebebeb 55%, #e4e4e4 100%);
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .top-nav {
@@ -33,9 +35,9 @@ body {
 .brand { font-size: 1.15rem; font-weight: 700; }
 .nav-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
-main { width: 100%; max-width: none; margin: 0; padding: 14px 12px 28px; }
-.app-shell { display: grid; grid-template-columns: 320px 1fr 340px; gap: 14px; width: 100%; min-height: calc(100vh - 62px); }
-.content { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+main { width: 100%; max-width: none; margin: 0; padding: 14px 12px 28px; height: calc(100vh - 62px); overflow: hidden; }
+.app-shell { display: grid; grid-template-columns: 320px 1fr 340px; gap: 14px; width: 100%; height: 100%; min-height: 0; }
+.content { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
 
 .card {
   background: linear-gradient(180deg, #ffffff 0%, #fafafa 100%);
@@ -75,38 +77,48 @@ button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
 .error-text { color: var(--bad); margin: 0; }
 
 .sidebar {
-  position: sticky;
-  top: 62px;
-  height: calc(100vh - 74px);
+  position: relative;
+  top: 0;
+  height: 100%;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 .vault-sidebar {
-  position: sticky;
+  position: relative;
   top: 0;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 .sidebar h3 { margin: 0; }
 .sidebar-block { border-top: 1px dashed #d3d3d3; padding-top: 10px; margin-top: 10px; }
+.sessions-block { min-height: 0; flex: 1; display: flex; flex-direction: column; }
 .session-id { font-weight: 700; letter-spacing: 0.08em; }
 
 .chart-wrap { height: 220px; background: #fff; border: 1px solid #e2e2e2; border-radius: 10px; padding: 4px; }
 
-.session-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 125px; overflow: auto; }
+.session-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
 .session-btn { font-size: 12px; padding: 6px 8px; }
 
 .tree-scroll {
-  max-height: 300px;
+  max-height: none;
   overflow: auto;
   border: 1px solid #ddd;
   border-radius: 10px;
   padding: 8px;
   background: #fcfcfc;
 }
+.vault-scroll { flex: 1; min-height: 0; }
 .explorer-node { margin: 1px 0; }
 .explorer-row {
   width: 100%;
@@ -142,7 +154,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
   100% { opacity: .4; transform: scale(.8); }
 }
 
-.chat { display: flex; flex-direction: column; gap: 12px; }
+.chat { display: flex; flex-direction: column; gap: 12px; overflow: auto; min-height: 0; flex: 1; padding-right: 2px; }
 .msg {
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -163,7 +175,7 @@ details {
 }
 summary { cursor: pointer; font-weight: 600; }
 
-.composer { position: sticky; bottom: 10px; }
+.composer { position: static; }
 
 .modal {
   position: fixed;
@@ -223,6 +235,8 @@ a { color: #111; }
 .toast-ui [data-sonner-toast][data-type="error"] { border-color: var(--bad) !important; color: var(--bad) !important; }
 
 @media (max-width: 1100px) {
+  body { overflow: auto; height: auto; }
+  main { height: auto; overflow: visible; }
   .app-shell { grid-template-columns: 1fr; }
   .sidebar { position: static; height: auto; }
   .vault-sidebar { position: static; height: auto; }
