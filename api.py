@@ -4,6 +4,7 @@ import os
 import sqlite3
 import subprocess
 import asyncio
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -397,13 +398,32 @@ async def query(request: QueryRequest):
 @app.post("/query/stream")
 async def query_stream(request: QueryRequest):
     async def event_stream():
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        sentinel = {"event": "__end__"}
+
+        def worker():
+            try:
+                stream_iter = rag.answer_stream(
+                    query=request.query,
+                    use_web=request.use_web,
+                    include_thinking=request.include_thinking,
+                )
+                for event in stream_iter:
+                    loop.call_soon_threadsafe(queue.put_nowait, event)
+            except Exception as e:
+                payload = {"event": "error", "message": str(e)}
+                loop.call_soon_threadsafe(queue.put_nowait, payload)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, sentinel)
+
+        threading.Thread(target=worker, daemon=True).start()
+
         try:
-            stream_iter = rag.answer_stream(
-                query=request.query,
-                use_web=request.use_web,
-                include_thinking=request.include_thinking,
-            )
-            for event in stream_iter:
+            while True:
+                event = await queue.get()
+                if event == sentinel:
+                    break
                 if event.get("event") == "done":
                     result = event.get("result", {})
                     conn = sqlite3.connect(DB_PATH)
@@ -436,7 +456,7 @@ async def query_stream(request: QueryRequest):
                     conn.commit()
                     conn.close()
                 yield f"data: {json.dumps(event)}\n\n"
-                await asyncio.sleep(0)
+                await asyncio.sleep(0.001)
         except Exception as e:
             payload = {"event": "error", "message": str(e)}
             yield f"data: {json.dumps(payload)}\n\n"
