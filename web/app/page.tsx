@@ -13,20 +13,46 @@ import {
   listSessions,
   queryRag,
   sendFeedback,
+  streamQueryRag,
 } from "../lib/api";
-import type { GpuStats, QueryResponse, SessionInfo, SourcePreview, VaultTreeNode } from "../lib/types";
+import type {
+  GpuStats,
+  QueryResponse,
+  SessionInfo,
+  SourcePreview,
+  VaultTree,
+  VaultTreeNode,
+} from "../lib/types";
 
 type ChatMsg =
   | { role: "user"; content: string; at: string }
   | { role: "assistant"; content: string; at: string; response: QueryResponse };
 
+type LiveTrace = {
+  active: boolean;
+  stageLogs: string[];
+  raw: string;
+  thinking: string;
+  answer: string;
+};
+
 function newSessionId(): string {
   return crypto.randomUUID();
 }
 
+function extractThinking(raw: string): { thinking: string; answer: string } {
+  const thinkingMatch = raw.match(/<thinking>([\s\S]*?)(?:<\/thinking>|$)/i);
+  const answerMatch = raw.match(/<answer>([\s\S]*?)(?:<\/answer>|$)/i);
+
+  return {
+    thinking: thinkingMatch?.[1]?.trim() || "",
+    answer: answerMatch?.[1]?.trim() || "",
+  };
+}
+
 function TreeNode({ name, node, level = 0 }: { name: string; node: VaultTreeNode; level?: number }) {
   return (
-    <details open={level < 1} className="tree-node" style={{ marginLeft: level * 10 }}>
+    <details open={level < 1} className="tree-node" style={{ marginLeft: level * 8 }}>
       <summary>{name}</summary>
       {Object.entries(node.folders).map(([childName, childNode]) => (
         <TreeNode key={`${name}/${childName}`} name={childName} node={childNode} level={level + 1} />
@@ -46,6 +72,7 @@ export default function Page() {
   const [verbose, setVerbose] = useState(false);
   const [useWeb, setUseWeb] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
+  const [liveThinking, setLiveThinking] = useState(true);
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
@@ -53,28 +80,32 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [gpu, setGpu] = useState<GpuStats | null>(null);
-  const [vaultTree, setVaultTree] = useState<Record<string, VaultTreeNode>>({});
+  const [vaultTree, setVaultTree] = useState<VaultTree | null>(null);
+  const [liveTrace, setLiveTrace] = useState<LiveTrace>({
+    active: false,
+    stageLogs: [],
+    raw: "",
+    thinking: "",
+    answer: "",
+  });
 
   const canSend = useMemo(() => input.trim().length > 0 && !loading && !!sessionId, [input, loading, sessionId]);
 
-  useEffect(() => {
-    const id = newSessionId();
-    setSessionId(id);
-  }, []);
-
-  useEffect(() => {
-    async function loadSidebarData() {
-      try {
-        const [sess, gpuStats, tree] = await Promise.all([listSessions(), getGpuStats(), getVaultTree()]);
-        setSessions(sess);
-        setGpu(gpuStats);
-        setVaultTree(tree.folders || {});
-      } catch {
-        // no-op
-      }
+  async function refreshSidebarData() {
+    try {
+      const [sess, gpuStats, tree] = await Promise.all([listSessions(), getGpuStats(), getVaultTree()]);
+      setSessions(sess);
+      setGpu(gpuStats);
+      setVaultTree(tree);
+    } catch {
+      // no-op
     }
+  }
 
-    loadSidebarData();
+  useEffect(() => {
+    setSessionId(newSessionId());
+    refreshSidebarData();
+
     const timer = setInterval(async () => {
       try {
         const gpuStats = await getGpuStats();
@@ -82,7 +113,7 @@ export default function Page() {
       } catch {
         // no-op
       }
-    }, 5000);
+    }, 2000);
 
     return () => clearInterval(timer);
   }, []);
@@ -121,20 +152,78 @@ export default function Page() {
     setError(null);
     setLoading(true);
     setInput("");
+    setLiveTrace({ active: liveThinking, stageLogs: [], raw: "", thinking: "", answer: "" });
 
     const userMsg: ChatMsg = { role: "user", content: question, at: new Date().toISOString() };
     setMessages((prev) => [...prev, userMsg]);
 
     try {
-      const response = await queryRag({ query: question, session_id: sessionId, verbose, use_web: useWeb });
-      const assistant: ChatMsg = { role: "assistant", content: response.answer, at: new Date().toISOString(), response };
-      setMessages((prev) => [...prev, assistant]);
-      const refreshedSessions = await listSessions();
-      setSessions(refreshedSessions);
+      if (liveThinking) {
+        let finalResult: QueryResponse | undefined;
+        await streamQueryRag(
+          {
+            query: question,
+            session_id: sessionId,
+            verbose,
+            use_web: useWeb,
+            include_thinking: true,
+          },
+          (event) => {
+            const type = String(event.event || "");
+            if (type === "stage") {
+              const name = String(event.name || "stage");
+              const count = Number(event.count || 0);
+              setLiveTrace((prev) => ({ ...prev, stageLogs: [...prev.stageLogs, `${name}: ${count}`] }));
+              return;
+            }
+
+            if (type === "token") {
+              const delta = String(event.delta || "");
+              setLiveTrace((prev) => {
+                const raw = prev.raw + delta;
+                const extracted = extractThinking(raw);
+                return {
+                  ...prev,
+                  raw,
+                  thinking: extracted.thinking,
+                  answer: extracted.answer,
+                };
+              });
+              return;
+            }
+
+            if (type === "done" && event.result) {
+              finalResult = event.result as QueryResponse;
+            }
+          },
+        );
+
+        if (finalResult !== undefined) {
+          const resolved = finalResult;
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              content: resolved.answer || "",
+              at: new Date().toISOString(),
+              response: resolved,
+            },
+          ]);
+        }
+      } else {
+        const response = await queryRag({ query: question, session_id: sessionId, verbose, use_web: useWeb });
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: response.answer, at: new Date().toISOString(), response },
+        ]);
+      }
+
+      await refreshSidebarData();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
       setLoading(false);
+      setLiveTrace((prev) => ({ ...prev, active: false }));
     }
   }
 
@@ -167,116 +256,147 @@ export default function Page() {
   }
 
   return (
-    <main className="app-shell">
-      <aside className="sidebar card">
-        <h3>Workspace</h3>
-        <div className="sidebar-block">
-          <div className="muted">Session</div>
-          <div className="session-id">{sessionId ? sessionId.slice(0, 8) : "..."}</div>
+    <>
+      <header className="top-nav">
+        <div className="brand">Obsidian RAG</div>
+        <div className="nav-controls">
+          <label className="row"><input type="checkbox" checked={verbose} onChange={(e) => setVerbose(e.target.checked)} />Verbose</label>
+          <label className="row"><input type="checkbox" checked={useWeb} onChange={(e) => setUseWeb(e.target.checked)} />Use trusted web</label>
+          <label className="row"><input type="checkbox" checked={showDebug} onChange={(e) => setShowDebug(e.target.checked)} />Show logs</label>
+          <label className="row"><input type="checkbox" checked={liveThinking} onChange={(e) => setLiveThinking(e.target.checked)} />Live thinking</label>
+          <button onClick={() => { setMessages([]); setSessionId(newSessionId()); }}>New Session</button>
         </div>
-        <div className="sidebar-block">
-          <div className="muted">Live GPU</div>
-          {gpu?.available ? (
-            gpu.gpus.map((g) => (
-              <div key={g.name} className="gpu-card">
-                <strong>{g.name}</strong>
-                <div className="muted">Util: {g.utilization_gpu}%</div>
-                <div className="muted">Mem: {g.memory_used_mb}/{g.memory_total_mb} MB</div>
-                <div className="muted">Temp: {g.temperature_c}°C</div>
-              </div>
-            ))
-          ) : (
-            <div className="muted">GPU stats unavailable</div>
-          )}
-        </div>
+      </header>
 
-        <div className="sidebar-block">
-          <div className="muted">Previous Sessions</div>
-          <div className="session-list">
-            {sessions.map((s) => (
-              <button key={s.session_id} className="session-btn" onClick={() => loadSession(s.session_id)}>
-                {s.session_id.slice(0, 8)} ({s.message_count})
-              </button>
-            ))}
+      <main className="app-shell">
+        <aside className="sidebar card">
+          <h3>Workspace</h3>
+          <div className="sidebar-block">
+            <div className="muted">Session</div>
+            <div className="session-id">{sessionId ? sessionId.slice(0, 8) : "..."}</div>
           </div>
-        </div>
 
-        <div className="sidebar-block">
-          <div className="muted">Vault Structure</div>
-          <div className="tree-scroll">
-            {Object.entries(vaultTree).map(([name, node]) => (
-              <TreeNode key={name} name={name} node={node} />
-            ))}
+          <div className="sidebar-block">
+            <div className="muted">Live GPU</div>
+            {gpu?.available ? (
+              gpu.gpus.map((g) => (
+                <div key={g.name} className="gpu-card">
+                  <strong>{g.name}</strong>
+                  <div className="muted">Util: {g.utilization_gpu}%</div>
+                  <div className="muted">Mem: {g.memory_used_mb}/{g.memory_total_mb} MB</div>
+                  <div className="muted">Temp: {g.temperature_c}°C</div>
+                </div>
+              ))
+            ) : (
+              <div className="muted">GPU stats unavailable</div>
+            )}
           </div>
-        </div>
-      </aside>
 
-      <section className="content">
-        <div className="card col hero">
-          <h2 style={{ margin: 0 }}>Obsidian RAG</h2>
-          <p className="muted" style={{ margin: 0 }}>Ask, inspect retrieval behavior, and continue sessions.</p>
-          <div className="row wrap-row">
-            <label className="row"><input type="checkbox" checked={verbose} onChange={(e) => setVerbose(e.target.checked)} />Verbose</label>
-            <label className="row"><input type="checkbox" checked={useWeb} onChange={(e) => setUseWeb(e.target.checked)} />Use trusted web</label>
-            <label className="row"><input type="checkbox" checked={showDebug} onChange={(e) => setShowDebug(e.target.checked)} />Show logs/thinking</label>
-            <button onClick={() => { setMessages([]); setSessionId(newSessionId()); }}>New Session</button>
+          <div className="sidebar-block">
+            <div className="muted">Previous Sessions</div>
+            <div className="session-list">
+              {sessions.map((s) => (
+                <button key={s.session_id} className="session-btn" onClick={() => loadSession(s.session_id)}>
+                  {s.session_id.slice(0, 8)} ({s.message_count})
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
 
-        <div className="chat">
-          {messages.map((m, idx) => (
-            <div key={`${m.at}-${idx}`} className={`msg ${m.role === "user" ? "user" : "assistant"}`}>
-              <div className="muted">{m.role.toUpperCase()}</div>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
-              {m.role === "assistant" && (
+          <div className="sidebar-block">
+            <div className="muted">Vault Structure</div>
+            <div className="tree-scroll">
+              {vaultTree && (
                 <>
-                  <div className="sources">
-                    {viewableSources(m).map((src) => (
-                      <button key={src} className="chip" onClick={() => openSource(src)}>{src.split("/").pop() || src}</button>
-                    ))}
-                  </div>
-
-                  {(m.response.web_sources || m.response.web_candidate_sources || []).length > 0 && (
-                    <details style={{ marginTop: 8 }}>
-                      <summary>Online resources</summary>
-                      <ul>
-                        {[...(m.response.web_sources || []), ...(m.response.web_candidate_sources || [])]
-                          .filter((v, i, arr) => arr.indexOf(v) === i)
-                          .map((url) => (
-                            <li key={url}><a href={url} target="_blank" rel="noreferrer">{url}</a></li>
-                          ))}
-                      </ul>
-                    </details>
-                  )}
-
-                  {showDebug && (
-                    <details style={{ marginTop: 8 }} open={idx === messages.length - 1}>
-                      <summary>Thinking and logs</summary>
-                      <p className="muted">{String(m.response.debug?.thinking_summary || "No summary available")}</p>
-                      <pre>{JSON.stringify(m.response.telemetry || {}, null, 2)}</pre>
-                    </details>
-                  )}
-
-                  <div className="row" style={{ marginTop: 8 }}>
-                    <button onClick={() => vote(m.response.answer_id, "up")}>Helpful</button>
-                    <button onClick={() => vote(m.response.answer_id, "down")}>Not Helpful</button>
-                  </div>
+                  <div className="tree-root">{vaultTree.root}</div>
+                  {(vaultTree.files || []).map((f) => (
+                    <div key={`root-${f}`} className="tree-file">{f}</div>
+                  ))}
+                  {Object.entries(vaultTree.folders || {}).map(([name, node]) => (
+                    <TreeNode key={name} name={name} node={node} />
+                  ))}
                 </>
               )}
             </div>
-          ))}
-        </div>
-
-        <div className="card col composer">
-          <textarea rows={4} placeholder="Ask a question about your notes..." value={input} onChange={(e) => setInput(e.target.value)} />
-          <div className="row">
-            <button disabled={!canSend} onClick={onAsk}>{loading ? "Thinking..." : "Ask"}</button>
           </div>
-          {error && <p style={{ color: "#9f1d1d" }}>{error}</p>}
-        </div>
-      </section>
+        </aside>
 
-      <SourceModal open={modalOpen} data={sourceData} onClose={() => setModalOpen(false)} />
-    </main>
+        <section className="content">
+          {liveTrace.active && (
+            <div className="card live-trace">
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <strong>Live Model Activity</strong>
+                <span className="pulse-dot" />
+              </div>
+              <div className="muted">{liveTrace.stageLogs.join(" -> ") || "Starting..."}</div>
+              <div className="trace-grid">
+                <div>
+                  <h4>Thinking</h4>
+                  <pre>{liveTrace.thinking || "Waiting for model thinking..."}</pre>
+                </div>
+                <div>
+                  <h4>Draft Answer</h4>
+                  <pre>{liveTrace.answer || "Waiting for answer..."}</pre>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="chat">
+            {messages.map((m, idx) => (
+              <div key={`${m.at}-${idx}`} className={`msg ${m.role === "user" ? "user" : "assistant"}`}>
+                <div className="muted">{m.role.toUpperCase()}</div>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                {m.role === "assistant" && (
+                  <>
+                    <div className="sources">
+                      {viewableSources(m).map((src) => (
+                        <button key={src} className="chip" onClick={() => openSource(src)}>{src.split("/").pop() || src}</button>
+                      ))}
+                    </div>
+
+                    {(m.response.web_sources || m.response.web_candidate_sources || []).length > 0 && (
+                      <details style={{ marginTop: 8 }}>
+                        <summary>Online resources used</summary>
+                        <ul>
+                          {[...(m.response.web_sources || []), ...(m.response.web_candidate_sources || [])]
+                            .filter((v, i, arr) => arr.indexOf(v) === i)
+                            .map((url) => (
+                              <li key={url}><a href={url} target="_blank" rel="noreferrer">{url}</a></li>
+                            ))}
+                        </ul>
+                      </details>
+                    )}
+
+                    {showDebug && (
+                      <details style={{ marginTop: 8 }}>
+                        <summary>Logs</summary>
+                        <p className="muted">{String(m.response.debug?.thinking_summary || "No summary available")}</p>
+                        <pre>{JSON.stringify(m.response.telemetry || {}, null, 2)}</pre>
+                      </details>
+                    )}
+
+                    <div className="row" style={{ marginTop: 8 }}>
+                      <button onClick={() => vote(m.response.answer_id, "up")}>Helpful</button>
+                      <button onClick={() => vote(m.response.answer_id, "down")}>Not Helpful</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div className="card col composer">
+            <textarea rows={4} placeholder="Ask a question about your notes..." value={input} onChange={(e) => setInput(e.target.value)} />
+            <div className="row">
+              <button disabled={!canSend} onClick={onAsk}>{loading ? "Thinking..." : "Ask"}</button>
+            </div>
+            {error && <p style={{ color: "#9f1d1d" }}>{error}</p>}
+          </div>
+        </section>
+
+        <SourceModal open={modalOpen} data={sourceData} onClose={() => setModalOpen(false)} />
+      </main>
+    </>
   );
 }

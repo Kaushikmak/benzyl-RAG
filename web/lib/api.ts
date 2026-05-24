@@ -62,3 +62,42 @@ export function getVaultTree(): Promise<VaultTree> {
 export function getGpuStats(): Promise<GpuStats> {
   return http<GpuStats>("/system/gpu");
 }
+
+export async function streamQueryRag(
+  payload: QueryRequest & { include_thinking?: boolean },
+  onEvent: (event: Record<string, unknown>) => void,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/query/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`Stream request failed: ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() || "";
+
+    for (const part of parts) {
+      const line = part
+        .split("\n")
+        .find((l) => l.startsWith("data: "));
+      if (!line) continue;
+      const data = line.slice(6);
+      try {
+        onEvent(JSON.parse(data));
+      } catch {
+        // ignore malformed events
+      }
+    }
+  }
+}
