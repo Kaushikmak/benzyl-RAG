@@ -67,6 +67,7 @@ init_db()
 logger.info("Initializing RAG system...")
 rag = ImprovedRAG()
 logger.info("RAG system ready!")
+last_feedback_refresh = 0.0
 
 
 class QueryRequest(BaseModel):
@@ -113,6 +114,18 @@ class GraphResponse(BaseModel):
     neighbors: Dict[int, List[Dict[str, str]]]
 
 
+def refresh_feedback_priors_if_needed(force: bool = False):
+    global last_feedback_refresh
+    now_ts = datetime.now().timestamp()
+    if not force and (now_ts - last_feedback_refresh) < config.FEEDBACK_REFRESH_SECONDS:
+        return
+    conn = sqlite3.connect(DB_PATH)
+    priors = compute_feedback_priors(conn)
+    conn.close()
+    rag.set_feedback_priors(priors)
+    last_feedback_refresh = now_ts
+
+
 @app.get("/")
 async def root():
     return {
@@ -132,6 +145,7 @@ async def root():
 @app.post("/query", response_model=QueryResponse)
 async def query(request: QueryRequest):
     try:
+        refresh_feedback_priors_if_needed()
         verbose_data = {}
 
         if request.verbose:
@@ -216,6 +230,7 @@ async def submit_feedback(request: FeedbackRequest):
         priors = compute_feedback_priors(conn)
         rag.set_feedback_priors(priors)
         conn.close()
+        refresh_feedback_priors_if_needed(force=True)
 
         return {"message": "Feedback saved", "active_priors": len(priors)}
     except Exception as e:
