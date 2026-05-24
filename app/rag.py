@@ -107,6 +107,11 @@ class ImprovedRAG:
                 "<thinking>short step-by-step reasoning grounded in the context</thinking>\n"
                 "<answer>final user-facing answer in markdown</answer>\n"
             )
+        
+        web_rule = ""
+        if "[web]" in context:
+            web_rule = "\n6. The context contains [web] sources. Answer based on the [local] vault first. Then, append a horizontal rule `---`, followed by the heading `### What I found from the web`, and synthesize the information from the [web] sources to complete the answer."
+
         return f"""
 You are an intelligent assistant reasoning over an Obsidian vault.
 
@@ -114,8 +119,8 @@ Rules:
 1. Base your answer primarily on the provided context.
 2. You may use general programming knowledge to interpret the user's query and the context.
 3. Do NOT hallucinate information about the user's personal vault that is not in the context.
-4. If context is insufficient, say: "I could not find this information in the Obsidian vault."
-{extra}
+4. If [local] context is insufficient, clearly state that the information was not found in the Obsidian vault.
+{extra}{web_rule}
 Context:
 {context}
 
