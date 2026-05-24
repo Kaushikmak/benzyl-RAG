@@ -19,3 +19,4 @@ fastapipython
 uvicorn
 pydantic
 streamlit
+pytest
