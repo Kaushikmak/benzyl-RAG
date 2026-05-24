@@ -85,7 +85,10 @@ class QueryResponse(BaseModel):
     sources: Optional[List[str]] = None
     local_sources: Optional[List[str]] = None
     web_sources: Optional[List[str]] = None
+    local_source_paths: Optional[List[str]] = None
     chunk_ids: Optional[List[str]] = None
+    telemetry: Optional[Dict] = None
+    debug: Optional[Dict] = None
 
 
 class FeedbackRequest(BaseModel):
@@ -194,6 +197,7 @@ async def query(request: QueryRequest):
         answer_id = result["answer_id"]
         local_sources = result.get("local_sources", [])
         web_sources = result.get("web_sources", [])
+        local_source_paths = result.get("local_source_paths", [])
         chunk_ids = result.get("chunk_ids", [])
 
         conn = sqlite3.connect(DB_PATH)
@@ -233,7 +237,10 @@ async def query(request: QueryRequest):
             sources=sources,
             local_sources=local_sources,
             web_sources=web_sources,
+            local_source_paths=local_source_paths,
             chunk_ids=chunk_ids,
+            telemetry=result.get("telemetry"),
+            debug=result.get("debug"),
         )
 
     except Exception as e:
@@ -280,8 +287,21 @@ async def get_feedback_stats():
 @app.get("/source")
 async def get_source(path: str):
     try:
-        candidate = Path(path).resolve()
+        raw = path.strip()
+        if raw.startswith("http://") or raw.startswith("https://"):
+            raise HTTPException(status_code=400, detail="Web sources are not local files")
+
         vault_root = Path(config.VAULT_PATH).resolve()
+        candidate = Path(raw)
+
+        if not candidate.is_absolute():
+            by_name = list(vault_root.rglob(raw))
+            if by_name:
+                candidate = by_name[0]
+            else:
+                candidate = (vault_root / raw)
+
+        candidate = candidate.resolve()
 
         if vault_root not in candidate.parents and candidate != vault_root:
             raise HTTPException(status_code=400, detail="Source path outside vault")

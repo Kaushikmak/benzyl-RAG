@@ -229,8 +229,30 @@ Answer:
             "sources": sorted({doc.source for doc in reranked}),
             "local_sources": sorted({doc.source for doc in reranked if doc.source_kind == "local"}),
             "web_sources": sorted({doc.source for doc in reranked if doc.source_kind == "web"}),
+            "local_source_paths": sorted(
+                {
+                    doc.metadata.get("source", "")
+                    for doc in reranked
+                    if doc.source_kind == "local" and doc.metadata.get("source")
+                }
+            ),
             "chunk_ids": [doc.doc_id for doc in reranked],
             "telemetry": telemetry,
+            "debug": {
+                "thinking_summary": (
+                    f"Retrieved {len(merged)} hybrid candidates, expanded to {len(expanded)} "
+                    f"with graph/web, reranked to top {len(reranked)}."
+                ),
+                "pipeline": [
+                    "vector_search",
+                    "bm25_search",
+                    "hybrid_merge",
+                    "graph_expand",
+                    "optional_web_augment",
+                    "rerank",
+                    "generation",
+                ],
+            },
         }
 
         self._cache_put(cache_key, result)

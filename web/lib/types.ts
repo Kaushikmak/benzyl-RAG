@@ -11,7 +11,10 @@ export type QueryResponse = {
   sources?: string[];
   local_sources?: string[];
   web_sources?: string[];
+  local_source_paths?: string[];
   chunk_ids?: string[];
+  telemetry?: Record<string, unknown>;
+  debug?: Record<string, unknown>;
   verbose_output?: Record<string, unknown> | null;
 };
 

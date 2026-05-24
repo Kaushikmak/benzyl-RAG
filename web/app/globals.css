@@ -24,7 +24,7 @@ main {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 12px;
+  padding: 14px;
 }
 
 .row { display: flex; gap: 8px; align-items: center; }
@@ -59,9 +59,12 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .chat { display: flex; flex-direction: column; gap: 12px; margin: 14px 0; }
 .msg { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: var(--panel); }
 .msg.user { border-color: #999; }
+.msg p { margin-top: 0.4rem; margin-bottom: 0.4rem; }
 
 .sources { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chip { font-size: 12px; padding: 4px 8px; border: 1px solid #444; border-radius: 999px; background: #fafafa; }
+details { border: 1px solid #ddd; border-radius: 8px; padding: 6px 8px; background: #fcfcfc; }
+summary { cursor: pointer; font-weight: 600; }
 
 .modal {
   position: fixed;

@@ -1,9 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useEffect } from "react";
 import SourceModal from "../components/source-modal";
 import { getSource, queryRag, sendFeedback } from "../lib/api";
 import type { QueryResponse, SourcePreview } from "../lib/types";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 type ChatMsg =
   | { role: "user"; content: string; at: string }
@@ -14,7 +17,7 @@ function newSessionId(): string {
 }
 
 export default function Page() {
-  const [sessionId] = useState<string>(newSessionId);
+  const [sessionId, setSessionId] = useState<string>("");
   const [input, setInput] = useState("");
   const [verbose, setVerbose] = useState(false);
   const [useWeb, setUseWeb] = useState(false);
@@ -26,9 +29,14 @@ export default function Page() {
 
   const canSend = useMemo(() => input.trim().length > 0 && !loading, [input, loading]);
 
+  useEffect(() => {
+    setSessionId(newSessionId());
+  }, []);
+
   async function onAsk() {
     const question = input.trim();
     if (!question) return;
+    if (!sessionId) return;
 
     setError(null);
     setLoading(true);
@@ -69,6 +77,10 @@ export default function Page() {
     }
   }
 
+  function viewableSources(m: Extract<ChatMsg, { role: "assistant" }>): string[] {
+    return m.response.local_source_paths || m.response.local_sources || [];
+  }
+
   async function vote(answerId: string, thumb: "up" | "down") {
     try {
       await sendFeedback({
@@ -98,7 +110,7 @@ export default function Page() {
             <input type="checkbox" checked={useWeb} onChange={(e) => setUseWeb(e.target.checked)} />
             Use trusted web docs
           </label>
-          <span className="muted">Session: {sessionId.slice(0, 8)}</span>
+          <span className="muted">Session: {sessionId ? sessionId.slice(0, 8) : "..."}</span>
         </div>
       </div>
 
@@ -106,16 +118,35 @@ export default function Page() {
         {messages.map((m, idx) => (
           <div key={`${m.at}-${idx}`} className={`msg ${m.role === "user" ? "user" : "assistant"}`}>
             <div className="muted">{m.role.toUpperCase()}</div>
-            <div>{m.content}</div>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
             {m.role === "assistant" && (
               <>
                 <div className="sources">
-                  {(m.response.sources || []).map((src) => (
+                  {viewableSources(m).map((src) => (
                     <button key={src} className="chip" onClick={() => openSource(src)}>
-                      {src}
+                      {src.split("/").pop() || src}
                     </button>
                   ))}
                 </div>
+                {(m.response.web_sources || []).length > 0 && (
+                  <details style={{ marginTop: 8 }}>
+                    <summary>Online resources used</summary>
+                    <ul>
+                      {(m.response.web_sources || []).map((url) => (
+                        <li key={url}>
+                          <a href={url} target="_blank" rel="noreferrer">
+                            {url}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+                <details style={{ marginTop: 8 }}>
+                  <summary>Thinking and logs</summary>
+                  <p className="muted">{String(m.response.debug?.thinking_summary || "No summary available")}</p>
+                  <pre>{JSON.stringify(m.response.telemetry || {}, null, 2)}</pre>
+                </details>
                 <div className="row" style={{ marginTop: 8 }}>
                   <button onClick={() => vote(m.response.answer_id, "up")}>Helpful</button>
                   <button onClick={() => vote(m.response.answer_id, "down")}>Not Helpful</button>
