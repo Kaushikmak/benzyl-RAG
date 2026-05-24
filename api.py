@@ -3,6 +3,7 @@ import logging
 import os
 import sqlite3
 import subprocess
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -10,6 +11,7 @@ from typing import Dict, List, Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app import config
@@ -77,6 +79,7 @@ class QueryRequest(BaseModel):
     session_id: str
     verbose: bool = False
     use_web: bool = False
+    include_thinking: bool = True
 
 
 class QueryResponse(BaseModel):
@@ -329,6 +332,56 @@ async def query(request: QueryRequest):
     except Exception as e:
         logger.error("Error processing query: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/query/stream")
+async def query_stream(request: QueryRequest):
+    async def event_stream():
+        try:
+            stream_iter = rag.answer_stream(
+                query=request.query,
+                use_web=request.use_web,
+                include_thinking=request.include_thinking,
+            )
+            for event in stream_iter:
+                if event.get("event") == "done":
+                    result = event.get("result", {})
+                    conn = sqlite3.connect(DB_PATH)
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                        INSERT INTO conversations
+                        (session_id, timestamp, query, answer, verbose_output, sources)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            request.session_id,
+                            datetime.now().isoformat(),
+                            request.query,
+                            result.get("answer", ""),
+                            None,
+                            json.dumps(result.get("sources", [])),
+                        ),
+                    )
+                    save_answer_record(
+                        conn,
+                        answer_id=result.get("answer_id", ""),
+                        session_id=request.session_id,
+                        query=request.query,
+                        answer=result.get("answer", ""),
+                        chunk_ids=result.get("chunk_ids", []),
+                        local_sources=result.get("local_sources", []),
+                        web_sources=result.get("web_sources", []),
+                    )
+                    conn.commit()
+                    conn.close()
+                yield f"data: {json.dumps(event)}\n\n"
+                await asyncio.sleep(0)
+        except Exception as e:
+            payload = {"event": "error", "message": str(e)}
+            yield f"data: {json.dumps(payload)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @app.post("/feedback")

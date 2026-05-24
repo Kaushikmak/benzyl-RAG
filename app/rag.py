@@ -99,6 +99,75 @@ class ImprovedRAG:
             )
         return "\n\n" + ("=" * 50) + "\n\n".join(parts)
 
+    def _build_prompt(self, query: str, context: str, include_thinking: bool = False) -> str:
+        extra = ""
+        if include_thinking:
+            extra = (
+                "\n5. Return your output in this exact structure:\n"
+                "<thinking>short step-by-step reasoning grounded in the context</thinking>\n"
+                "<answer>final user-facing answer in markdown</answer>\n"
+            )
+        return f"""
+You are an intelligent assistant reasoning over an Obsidian vault.
+
+Rules:
+1. Base your answer primarily on the provided context.
+2. You may use general programming knowledge to interpret the user's query and the context.
+3. Do NOT hallucinate information about the user's personal vault that is not in the context.
+4. If context is insufficient, say: "I could not find this information in the Obsidian vault."
+{extra}
+Context:
+{context}
+
+Question:
+{query}
+
+Answer:
+"""
+
+    def _build_result(
+        self,
+        answer_text: str,
+        merged: List[ScoredDoc],
+        expanded: List[ScoredDoc],
+        reranked: List[ScoredDoc],
+        web_docs: List[ScoredDoc],
+        telemetry: Dict[str, float],
+    ) -> dict:
+        answer_id = uuid.uuid4().hex
+        return {
+            "answer_id": answer_id,
+            "answer": answer_text,
+            "sources": sorted({doc.source for doc in reranked}),
+            "local_sources": sorted({doc.source for doc in reranked if doc.source_kind == "local"}),
+            "web_sources": sorted({doc.source for doc in reranked if doc.source_kind == "web"}),
+            "web_candidate_sources": sorted({doc.source for doc in web_docs}),
+            "local_source_paths": sorted(
+                {
+                    doc.metadata.get("source", "")
+                    for doc in reranked
+                    if doc.source_kind == "local" and doc.metadata.get("source")
+                }
+            ),
+            "chunk_ids": [doc.doc_id for doc in reranked],
+            "telemetry": telemetry,
+            "debug": {
+                "thinking_summary": (
+                    f"Retrieved {len(merged)} hybrid candidates, expanded to {len(expanded)} "
+                    f"with graph/web, reranked to top {len(reranked)}."
+                ),
+                "pipeline": [
+                    "vector_search",
+                    "bm25_search",
+                    "hybrid_merge",
+                    "graph_expand",
+                    "optional_web_augment",
+                    "rerank",
+                    "generation",
+                ],
+            },
+        }
+
     def _cache_get(self, key: str) -> Optional[dict]:
         if not config.ENABLE_QUERY_CACHE:
             return None
@@ -194,24 +263,7 @@ class ImprovedRAG:
                 print(f"   {doc.content[:120]}...\n")
 
         context = self.build_context(reranked)
-
-        prompt = f"""
-You are an intelligent assistant reasoning over an Obsidian vault.
-
-Rules:
-1. Base your answer primarily on the provided context.
-2. You may use general programming knowledge to interpret the user's query and the context.
-3. Do NOT hallucinate information about the user's personal vault that is not in the context.
-4. If context is insufficient, say: "I could not find this information in the Obsidian vault."
-
-Context:
-{context}
-
-Question:
-{query}
-
-Answer:
-"""
+        prompt = self._build_prompt(query=query, context=context, include_thinking=False)
 
         start = time.perf_counter()
         response = ollama.chat(
@@ -223,42 +275,85 @@ Answer:
         telemetry["total_ms"] = round((time.perf_counter() - total_start) * 1000, 2)
         telemetry["cache_hit"] = False
 
-        answer_id = uuid.uuid4().hex
-        result = {
-            "answer_id": answer_id,
-            "answer": response["message"]["content"],
-            "sources": sorted({doc.source for doc in reranked}),
-            "local_sources": sorted({doc.source for doc in reranked if doc.source_kind == "local"}),
-            "web_sources": sorted({doc.source for doc in reranked if doc.source_kind == "web"}),
-            "web_candidate_sources": sorted({doc.source for doc in web_docs}),
-            "local_source_paths": sorted(
-                {
-                    doc.metadata.get("source", "")
-                    for doc in reranked
-                    if doc.source_kind == "local" and doc.metadata.get("source")
-                }
-            ),
-            "chunk_ids": [doc.doc_id for doc in reranked],
-            "telemetry": telemetry,
-            "debug": {
-                "thinking_summary": (
-                    f"Retrieved {len(merged)} hybrid candidates, expanded to {len(expanded)} "
-                    f"with graph/web, reranked to top {len(reranked)}."
-                ),
-                "pipeline": [
-                    "vector_search",
-                    "bm25_search",
-                    "hybrid_merge",
-                    "graph_expand",
-                    "optional_web_augment",
-                    "rerank",
-                    "generation",
-                ],
-            },
-        }
+        result = self._build_result(
+            answer_text=response["message"]["content"],
+            merged=merged,
+            expanded=expanded,
+            reranked=reranked,
+            web_docs=web_docs,
+            telemetry=telemetry,
+        )
 
         self._cache_put(cache_key, result)
         return result
+
+    def answer_stream(self, query: str, use_web: bool = False, include_thinking: bool = True):
+        total_start = time.perf_counter()
+        merged, telemetry = self.retrieve_candidates(query, verbose=False)
+        yield {"event": "stage", "name": "hybrid_retrieval", "count": len(merged)}
+
+        start = time.perf_counter()
+        top_merged = merged[: config.GRAPH_TOP_MERGED]
+        expanded = expand_with_graph(
+            self.graph,
+            self.chunk_index,
+            top_merged,
+            max_neighbors=config.GRAPH_MAX_NEIGHBORS,
+            max_chunks_per_neighbor=config.GRAPH_MAX_CHUNKS_PER_NEIGHBOR,
+        )
+        telemetry["graph_ms"] = round((time.perf_counter() - start) * 1000, 2)
+        yield {"event": "stage", "name": "graph_expand", "count": len(expanded)}
+
+        web_docs: List[ScoredDoc] = []
+        if use_web:
+            start = time.perf_counter()
+            web_docs = retrieve_web_docs(query)
+            expanded.extend(web_docs)
+            telemetry["web_ms"] = round((time.perf_counter() - start) * 1000, 2)
+        else:
+            telemetry["web_ms"] = 0.0
+        yield {"event": "stage", "name": "web_augment", "count": len(web_docs)}
+
+        start = time.perf_counter()
+        reranked = rerank(self.reranker, query, expanded, top_k=config.RERANK_TOP_K)
+        telemetry["rerank_ms"] = round((time.perf_counter() - start) * 1000, 2)
+        yield {"event": "stage", "name": "rerank", "count": len(reranked)}
+
+        context = self.build_context(reranked)
+        prompt = self._build_prompt(query=query, context=context, include_thinking=include_thinking)
+
+        start = time.perf_counter()
+        stream = ollama.chat(
+            model=config.OLLAMA_MODEL,
+            options={"temperature": 0},
+            messages=[{"role": "user", "content": prompt}],
+            stream=True,
+        )
+        full_text = ""
+        for chunk in stream:
+            delta = chunk.get("message", {}).get("content", "")
+            if not delta:
+                continue
+            full_text += delta
+            yield {"event": "token", "delta": delta}
+        telemetry["generation_ms"] = round((time.perf_counter() - start) * 1000, 2)
+        telemetry["total_ms"] = round((time.perf_counter() - total_start) * 1000, 2)
+        telemetry["cache_hit"] = False
+
+        answer_text = full_text
+        if include_thinking:
+            answer_match = re.search(r"<answer>(.*?)</answer>", full_text, re.DOTALL | re.IGNORECASE)
+            if answer_match:
+                answer_text = answer_match.group(1).strip()
+        result = self._build_result(
+            answer_text=answer_text,
+            merged=merged,
+            expanded=expanded,
+            reranked=reranked,
+            web_docs=web_docs,
+            telemetry=telemetry,
+        )
+        yield {"event": "done", "result": result}
 
     def show_neighbors(self, note_query: str, depth: int = 1):
         node_map_lower = {node.lower(): node for node in self.graph.nodes()}
