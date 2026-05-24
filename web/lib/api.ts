@@ -6,6 +6,7 @@ import type {
   QueryResponse,
   SessionInfo,
   SourcePreview,
+  SystemMetric,
   VaultTree,
 } from "./types";
 
@@ -63,8 +64,16 @@ export function getGpuStats(): Promise<GpuStats> {
   return http<GpuStats>("/system/gpu");
 }
 
+export function getSystemMetric(): Promise<SystemMetric> {
+  return http<SystemMetric>("/system/metrics");
+}
+
+export function getReady(): Promise<{ ready: boolean }> {
+  return http<{ ready: boolean }>("/ready");
+}
+
 export async function streamQueryRag(
-  payload: QueryRequest & { include_thinking?: boolean },
+  payload: QueryRequest,
   onEvent: (event: Record<string, unknown>) => void,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/query/stream`, {

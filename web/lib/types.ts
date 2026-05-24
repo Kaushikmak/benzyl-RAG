@@ -3,6 +3,7 @@ export type QueryRequest = {
   session_id: string;
   verbose?: boolean;
   use_web?: boolean;
+  include_thinking?: boolean;
 };
 
 export type QueryResponse = {
@@ -48,15 +49,20 @@ export type HistoryItem = {
   sources?: string[] | null;
 };
 
-export type VaultTree = {
-  root: string;
-  folders: Record<string, VaultTreeNode>;
-  files: string[];
+export type VaultFile = {
+  name: string;
+  path: string;
 };
 
 export type VaultTreeNode = {
-  folders: Record<string, VaultTreeNode>;
-  files: string[];
+  name: string;
+  path: string;
+  folders: VaultTreeNode[];
+  files: VaultFile[];
+};
+
+export type VaultTree = {
+  root: VaultTreeNode;
 };
 
 export type GpuStats = {
@@ -68,4 +74,11 @@ export type GpuStats = {
     memory_total_mb: number;
     temperature_c: number;
   }>;
+};
+
+export type SystemMetric = {
+  timestamp: string;
+  cpu_percent: number;
+  ram_percent: number;
+  gpu_percent: number;
 };

@@ -3,12 +3,24 @@
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { toast } from "sonner";
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 import SourceModal from "../components/source-modal";
 import {
-  getGpuStats,
   getHistory,
+  getReady,
   getSource,
+  getSystemMetric,
   getVaultTree,
   listSessions,
   queryRag,
@@ -16,10 +28,11 @@ import {
   streamQueryRag,
 } from "../lib/api";
 import type {
-  GpuStats,
   QueryResponse,
   SessionInfo,
   SourcePreview,
+  SystemMetric,
+  VaultFile,
   VaultTree,
   VaultTreeNode,
 } from "../lib/types";
@@ -43,44 +56,59 @@ function newSessionId(): string {
 function extractThinking(raw: string): { thinking: string; answer: string } {
   const thinkingMatch = raw.match(/<thinking>([\s\S]*?)(?:<\/thinking>|$)/i);
   const answerMatch = raw.match(/<answer>([\s\S]*?)(?:<\/answer>|$)/i);
-
   return {
     thinking: thinkingMatch?.[1]?.trim() || "",
     answer: answerMatch?.[1]?.trim() || "",
   };
 }
 
-function TreeNode({ name, node, level = 0 }: { name: string; node: VaultTreeNode; level?: number }) {
+function TreeView({ node, onOpen }: { node: VaultTreeNode; onOpen: (f: VaultFile) => void }) {
   return (
-    <details open={level < 1} className="tree-node" style={{ marginLeft: level * 8 }}>
-      <summary>{name}</summary>
-      {Object.entries(node.folders).map(([childName, childNode]) => (
-        <TreeNode key={`${name}/${childName}`} name={childName} node={childNode} level={level + 1} />
+    <details open className="tree-node">
+      <summary>{node.name}</summary>
+      {node.files.map((f) => (
+        <button key={f.path} className="file-btn" onClick={() => onOpen(f)}>
+          {f.name}
+        </button>
       ))}
-      {node.files.map((file) => (
-        <div key={`${name}/${file}`} className="tree-file">
-          {file}
+      {node.folders.map((folder) => (
+        <div key={folder.path} className="tree-branch">
+          <TreeView node={folder} onOpen={onOpen} />
         </div>
       ))}
     </details>
   );
 }
 
+function LoadingSkeleton() {
+  return (
+    <div className="loading-shell">
+      <div className="loading-card shimmer" />
+      <div className="loading-grid">
+        <div className="loading-card shimmer tall" />
+        <div className="loading-card shimmer tall" />
+      </div>
+      <p className="muted center">Booting backend models and indexes. UI will unlock when ready.</p>
+    </div>
+  );
+}
+
 export default function Page() {
+  const [backendReady, setBackendReady] = useState(false);
   const [sessionId, setSessionId] = useState<string>("");
   const [input, setInput] = useState("");
-  const [verbose, setVerbose] = useState(false);
   const [useWeb, setUseWeb] = useState(false);
-  const [showDebug, setShowDebug] = useState(false);
-  const [liveThinking, setLiveThinking] = useState(true);
+  const [showLogs, setShowLogs] = useState(false);
+  const [showThinking, setShowThinking] = useState(true);
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [sourceData, setSourceData] = useState<SourcePreview | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
-  const [gpu, setGpu] = useState<GpuStats | null>(null);
   const [vaultTree, setVaultTree] = useState<VaultTree | null>(null);
+  const [metrics, setMetrics] = useState<SystemMetric[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
   const [liveTrace, setLiveTrace] = useState<LiveTrace>({
     active: false,
     stageLogs: [],
@@ -89,34 +117,76 @@ export default function Page() {
     answer: "",
   });
 
-  const canSend = useMemo(() => input.trim().length > 0 && !loading && !!sessionId, [input, loading, sessionId]);
+  const canSend = useMemo(
+    () => input.trim().length > 0 && !loading && !!sessionId && backendReady,
+    [input, loading, sessionId, backendReady],
+  );
 
-  async function refreshSidebarData() {
+  async function refreshWorkspace() {
     try {
-      const [sess, gpuStats, tree] = await Promise.all([listSessions(), getGpuStats(), getVaultTree()]);
+      const [sess, tree] = await Promise.all([listSessions(), getVaultTree()]);
       setSessions(sess);
-      setGpu(gpuStats);
       setVaultTree(tree);
-    } catch {
-      // no-op
+    } catch (e) {
+      toast.error("Failed to refresh workspace");
     }
   }
 
   useEffect(() => {
     setSessionId(newSessionId());
-    refreshSidebarData();
+    let mounted = true;
 
-    const timer = setInterval(async () => {
+    async function checkReady() {
       try {
-        const gpuStats = await getGpuStats();
-        setGpu(gpuStats);
+        const r = await getReady();
+        if (mounted && r.ready) {
+          setBackendReady(true);
+          await refreshWorkspace();
+          toast.success("Backend is ready");
+          return true;
+        }
+      } catch {
+        // backend not ready yet
+      }
+      return false;
+    }
+
+    checkReady();
+    const readyTimer = setInterval(async () => {
+      const ok = await checkReady();
+      if (ok) clearInterval(readyTimer);
+    }, 2000);
+
+    return () => {
+      mounted = false;
+      clearInterval(readyTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!backendReady) return;
+
+    let mounted = true;
+    const tick = async () => {
+      try {
+        const m = await getSystemMetric();
+        if (!mounted) return;
+        setMetrics((prev) => {
+          const next = [...prev, m];
+          return next.slice(-60);
+        });
       } catch {
         // no-op
       }
-    }, 2000);
+    };
 
-    return () => clearInterval(timer);
-  }, []);
+    tick();
+    const metricTimer = setInterval(tick, 1000);
+    return () => {
+      mounted = false;
+      clearInterval(metricTimer);
+    };
+  }, [backendReady]);
 
   async function loadSession(existingSessionId: string) {
     try {
@@ -140,8 +210,35 @@ export default function Page() {
         });
       setSessionId(existingSessionId);
       setMessages(rebuilt);
+      toast.success("Session loaded");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load session");
+      toast.error("Failed to load session");
+    }
+  }
+
+  async function openSource(path: string) {
+    try {
+      const data = await getSource(path);
+      setSourceData(data);
+      setModalOpen(true);
+    } catch {
+      toast.error("Failed to open file");
+    }
+  }
+
+  async function vote(answerId: string, thumb: "up" | "down") {
+    if (answerId.startsWith("history-")) return;
+    try {
+      await sendFeedback({
+        answer_id: answerId,
+        session_id: sessionId,
+        thumb,
+        reason_tags: thumb === "down" ? ["irrelevant"] : [],
+      });
+      if (thumb === "up") toast.success("Feedback saved");
+      if (thumb === "down") toast.error("Marked as not helpful");
+    } catch {
+      toast.error("Feedback failed");
     }
   }
 
@@ -152,19 +249,18 @@ export default function Page() {
     setError(null);
     setLoading(true);
     setInput("");
-    setLiveTrace({ active: liveThinking, stageLogs: [], raw: "", thinking: "", answer: "" });
+    setLiveTrace({ active: showThinking, stageLogs: [], raw: "", thinking: "", answer: "" });
 
     const userMsg: ChatMsg = { role: "user", content: question, at: new Date().toISOString() };
     setMessages((prev) => [...prev, userMsg]);
 
     try {
-      if (liveThinking) {
+      if (showThinking) {
         let finalResult: QueryResponse | undefined;
         await streamQueryRag(
           {
             query: question,
             session_id: sessionId,
-            verbose,
             use_web: useWeb,
             include_thinking: true,
           },
@@ -176,29 +272,27 @@ export default function Page() {
               setLiveTrace((prev) => ({ ...prev, stageLogs: [...prev.stageLogs, `${name}: ${count}`] }));
               return;
             }
-
             if (type === "token") {
               const delta = String(event.delta || "");
               setLiveTrace((prev) => {
                 const raw = prev.raw + delta;
-                const extracted = extractThinking(raw);
+                const parsed = extractThinking(raw);
                 return {
                   ...prev,
                   raw,
-                  thinking: extracted.thinking,
-                  answer: extracted.answer,
+                  thinking: parsed.thinking,
+                  answer: parsed.answer,
                 };
               });
               return;
             }
-
             if (type === "done" && event.result) {
               finalResult = event.result as QueryResponse;
             }
           },
         );
 
-        if (finalResult !== undefined) {
+        if (finalResult) {
           const resolved = finalResult;
           setMessages((prev) => [
             ...prev,
@@ -211,48 +305,31 @@ export default function Page() {
           ]);
         }
       } else {
-        const response = await queryRag({ query: question, session_id: sessionId, verbose, use_web: useWeb });
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: response.answer, at: new Date().toISOString(), response },
-        ]);
+        const response = await queryRag({ query: question, session_id: sessionId, use_web: useWeb });
+        setMessages((prev) => [...prev, { role: "assistant", content: response.answer, at: new Date().toISOString(), response }]);
       }
-
-      await refreshSidebarData();
+      await refreshWorkspace();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
+      toast.error("Query failed");
     } finally {
       setLoading(false);
       setLiveTrace((prev) => ({ ...prev, active: false }));
     }
   }
 
-  async function openSource(path: string) {
-    try {
-      const data = await getSource(path);
-      setSourceData(data);
-      setModalOpen(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load source");
-    }
-  }
-
-  function viewableSources(m: Extract<ChatMsg, { role: "assistant" }>): string[] {
-    return m.response.local_source_paths || m.response.local_sources || [];
-  }
-
-  async function vote(answerId: string, thumb: "up" | "down") {
-    if (answerId.startsWith("history-")) return;
-    try {
-      await sendFeedback({
-        answer_id: answerId,
-        session_id: sessionId,
-        thumb,
-        reason_tags: thumb === "down" ? ["irrelevant"] : [],
-      });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to submit feedback");
-    }
+  if (!backendReady) {
+    return (
+      <>
+        <header className="top-nav">
+          <div className="brand">Obsidian RAG</div>
+          <div className="muted">Waiting for backend...</div>
+        </header>
+        <main>
+          <LoadingSkeleton />
+        </main>
+      </>
+    );
   }
 
   return (
@@ -260,11 +337,10 @@ export default function Page() {
       <header className="top-nav">
         <div className="brand">Obsidian RAG</div>
         <div className="nav-controls">
-          <label className="row"><input type="checkbox" checked={verbose} onChange={(e) => setVerbose(e.target.checked)} />Verbose</label>
-          <label className="row"><input type="checkbox" checked={useWeb} onChange={(e) => setUseWeb(e.target.checked)} />Use trusted web</label>
-          <label className="row"><input type="checkbox" checked={showDebug} onChange={(e) => setShowDebug(e.target.checked)} />Show logs</label>
-          <label className="row"><input type="checkbox" checked={liveThinking} onChange={(e) => setLiveThinking(e.target.checked)} />Live thinking</label>
-          <button onClick={() => { setMessages([]); setSessionId(newSessionId()); }}>New Session</button>
+          <label className="row"><input type="checkbox" checked={useWeb} onChange={(e) => setUseWeb(e.target.checked)} />Use web refs</label>
+          <label className="row"><input type="checkbox" checked={showLogs} onChange={(e) => setShowLogs(e.target.checked)} />Show logs</label>
+          <label className="row"><input type="checkbox" checked={showThinking} onChange={(e) => setShowThinking(e.target.checked)} />Live thinking</label>
+          <button onClick={() => { setMessages([]); setSessionId(newSessionId()); toast.success("New session started"); }}>New Session</button>
         </div>
       </header>
 
@@ -273,23 +349,25 @@ export default function Page() {
           <h3>Workspace</h3>
           <div className="sidebar-block">
             <div className="muted">Session</div>
-            <div className="session-id">{sessionId ? sessionId.slice(0, 8) : "..."}</div>
+            <div className="session-id">{sessionId.slice(0, 8)}</div>
           </div>
 
           <div className="sidebar-block">
-            <div className="muted">Live GPU</div>
-            {gpu?.available ? (
-              gpu.gpus.map((g) => (
-                <div key={g.name} className="gpu-card">
-                  <strong>{g.name}</strong>
-                  <div className="muted">Util: {g.utilization_gpu}%</div>
-                  <div className="muted">Mem: {g.memory_used_mb}/{g.memory_total_mb} MB</div>
-                  <div className="muted">Temp: {g.temperature_c}°C</div>
-                </div>
-              ))
-            ) : (
-              <div className="muted">GPU stats unavailable</div>
-            )}
+            <div className="muted">Resources (CPU/RAM/GPU)</div>
+            <div className="chart-wrap">
+              <ResponsiveContainer width="100%" height={210}>
+                <LineChart data={metrics.map((m, i) => ({ i, cpu: m.cpu_percent, ram: m.ram_percent, gpu: m.gpu_percent }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#ddd" />
+                  <XAxis dataKey="i" tick={{ fontSize: 10 }} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
+                  <Tooltip />
+                  <Legend />
+                  <Line type="monotone" dataKey="cpu" stroke="#d12f2f" dot={false} name="CPU %" />
+                  <Line type="monotone" dataKey="ram" stroke="#2f9d57" dot={false} name="RAM %" />
+                  <Line type="monotone" dataKey="gpu" stroke="#2b2b2b" dot={false} name="GPU %" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           </div>
 
           <div className="sidebar-block">
@@ -304,19 +382,9 @@ export default function Page() {
           </div>
 
           <div className="sidebar-block">
-            <div className="muted">Vault Structure</div>
+            <div className="muted">Vault File Browser</div>
             <div className="tree-scroll">
-              {vaultTree && (
-                <>
-                  <div className="tree-root">{vaultTree.root}</div>
-                  {(vaultTree.files || []).map((f) => (
-                    <div key={`root-${f}`} className="tree-file">{f}</div>
-                  ))}
-                  {Object.entries(vaultTree.folders || {}).map(([name, node]) => (
-                    <TreeNode key={name} name={name} node={node} />
-                  ))}
-                </>
-              )}
+              {vaultTree?.root ? <TreeView node={vaultTree.root} onOpen={(f) => openSource(f.path)} /> : <div className="muted">No files</div>}
             </div>
           </div>
         </aside>
@@ -325,18 +393,18 @@ export default function Page() {
           {liveTrace.active && (
             <div className="card live-trace">
               <div className="row" style={{ justifyContent: "space-between" }}>
-                <strong>Live Model Activity</strong>
+                <strong>Realtime Model Stream</strong>
                 <span className="pulse-dot" />
               </div>
-              <div className="muted">{liveTrace.stageLogs.join(" -> ") || "Starting..."}</div>
+              <div className="muted">{liveTrace.stageLogs.join("  ->  ") || "Starting retrieval..."}</div>
               <div className="trace-grid">
                 <div>
                   <h4>Thinking</h4>
-                  <pre>{liveTrace.thinking || "Waiting for model thinking..."}</pre>
+                  <pre>{liveTrace.thinking || "Thinking stream will appear here..."}</pre>
                 </div>
                 <div>
                   <h4>Draft Answer</h4>
-                  <pre>{liveTrace.answer || "Waiting for answer..."}</pre>
+                  <pre>{liveTrace.answer || "Answer stream will appear here..."}</pre>
                 </div>
               </div>
             </div>
@@ -350,14 +418,13 @@ export default function Page() {
                 {m.role === "assistant" && (
                   <>
                     <div className="sources">
-                      {viewableSources(m).map((src) => (
+                      {(m.response.local_source_paths || []).map((src) => (
                         <button key={src} className="chip" onClick={() => openSource(src)}>{src.split("/").pop() || src}</button>
                       ))}
                     </div>
-
                     {(m.response.web_sources || m.response.web_candidate_sources || []).length > 0 && (
                       <details style={{ marginTop: 8 }}>
-                        <summary>Online resources used</summary>
+                        <summary>Online references</summary>
                         <ul>
                           {[...(m.response.web_sources || []), ...(m.response.web_candidate_sources || [])]
                             .filter((v, i, arr) => arr.indexOf(v) === i)
@@ -368,17 +435,16 @@ export default function Page() {
                       </details>
                     )}
 
-                    {showDebug && (
+                    {showLogs && (
                       <details style={{ marginTop: 8 }}>
                         <summary>Logs</summary>
-                        <p className="muted">{String(m.response.debug?.thinking_summary || "No summary available")}</p>
                         <pre>{JSON.stringify(m.response.telemetry || {}, null, 2)}</pre>
                       </details>
                     )}
 
                     <div className="row" style={{ marginTop: 8 }}>
-                      <button onClick={() => vote(m.response.answer_id, "up")}>Helpful</button>
-                      <button onClick={() => vote(m.response.answer_id, "down")}>Not Helpful</button>
+                      <button className="good-btn" onClick={() => vote(m.response.answer_id, "up")}>Helpful</button>
+                      <button className="bad-btn" onClick={() => vote(m.response.answer_id, "down")}>Not Helpful</button>
                     </div>
                   </>
                 )}
@@ -387,11 +453,11 @@ export default function Page() {
           </div>
 
           <div className="card col composer">
-            <textarea rows={4} placeholder="Ask a question about your notes..." value={input} onChange={(e) => setInput(e.target.value)} />
+            <textarea rows={4} placeholder="Ask a question about your vault..." value={input} onChange={(e) => setInput(e.target.value)} />
             <div className="row">
-              <button disabled={!canSend} onClick={onAsk}>{loading ? "Thinking..." : "Ask"}</button>
+              <button disabled={!canSend} onClick={onAsk}>{loading ? "Generating..." : "Ask"}</button>
             </div>
-            {error && <p style={{ color: "#9f1d1d" }}>{error}</p>}
+            {error && <p className="error-text">{error}</p>}
           </div>
         </section>
 
