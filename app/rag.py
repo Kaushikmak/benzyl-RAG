@@ -145,6 +145,7 @@ class ImprovedRAG:
         cache_key = f"{query}|{use_web}"
         cached = self._cache_get(cache_key)
         if cached:
+            cached["telemetry"]["cache_hit"] = True
             return cached
 
         total_start = time.perf_counter()
@@ -203,6 +204,7 @@ Answer:
         )
         telemetry["generation_ms"] = round((time.perf_counter() - start) * 1000, 2)
         telemetry["total_ms"] = round((time.perf_counter() - total_start) * 1000, 2)
+        telemetry["cache_hit"] = False
 
         answer_id = uuid.uuid4().hex
         result = {
