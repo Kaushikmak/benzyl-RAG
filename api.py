@@ -6,7 +6,7 @@ import subprocess
 import asyncio
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -72,6 +72,7 @@ logger.info("Initializing RAG system...")
 rag = ImprovedRAG()
 logger.info("RAG system ready!")
 last_feedback_refresh = 0.0
+backend_ready = True
 
 
 class QueryRequest(BaseModel):
@@ -119,6 +120,21 @@ class SessionInfo(BaseModel):
     message_count: int
 
 
+class TreeFile(BaseModel):
+    name: str
+    path: str
+
+
+class TreeNode(BaseModel):
+    name: str
+    path: str
+    folders: List["TreeNode"] = Field(default_factory=list)
+    files: List[TreeFile] = Field(default_factory=list)
+
+
+TreeNode.model_rebuild()
+
+
 class GraphRequest(BaseModel):
     note_query: str
     depth: int = 1
@@ -158,6 +174,11 @@ async def root():
     }
 
 
+@app.get("/ready")
+async def ready():
+    return {"ready": backend_ready}
+
+
 @app.get("/sessions", response_model=List[SessionInfo])
 async def list_sessions(limit: int = 30):
     conn = sqlite3.connect(DB_PATH)
@@ -184,24 +205,32 @@ async def list_sessions(limit: int = 30):
 async def vault_tree():
     root = Path(config.VAULT_PATH).resolve()
     if not root.exists():
-        return {"root": str(root), "folders": {}, "files": []}
+        return {"root": {"name": root.name, "path": str(root), "folders": [], "files": []}}
 
-    tree = {"root": str(root), "folders": {}, "files": []}
+    allowed_ext = {".md", ".pdf", ".docx", ".pptx", ".txt"}
 
-    def ensure_dir(base: Dict, parts: List[str]) -> Dict:
-        node = base
-        for part in parts:
-            node = node["folders"].setdefault(part, {"folders": {}, "files": []})
+    def walk_dir(path: Path) -> Dict[str, Any]:
+        node: Dict[str, Any] = {
+            "name": path.name if path != root else root.name,
+            "path": str(path),
+            "folders": [],
+            "files": [],
+        }
+        try:
+            entries = sorted(path.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
+        except Exception:
+            return node
+
+        for entry in entries:
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir():
+                node["folders"].append(walk_dir(entry))
+            elif entry.suffix.lower() in allowed_ext:
+                node["files"].append({"name": entry.name, "path": str(entry)})
         return node
 
-    for dirpath, dirnames, filenames in os.walk(root):
-        rel = os.path.relpath(dirpath, root)
-        parts = [] if rel == "." else rel.split(os.sep)
-        target = ensure_dir(tree, parts)
-        target["files"] = sorted([f for f in filenames if f.lower().endswith((".md", ".pdf", ".docx", ".pptx"))])
-        for d in dirnames:
-            target["folders"].setdefault(d, {"folders": {}, "files": []})
-    return tree
+    return {"root": walk_dir(root)}
 
 
 @app.get("/system/gpu")
@@ -229,6 +258,37 @@ async def gpu_usage():
         return {"available": True, "gpus": gpus}
     except Exception:
         return {"available": False, "gpus": []}
+
+
+@app.get("/system/metrics")
+async def system_metrics():
+    cpu_percent = 0.0
+    ram_percent = 0.0
+    try:
+        import psutil  # type: ignore
+
+        cpu_percent = float(psutil.cpu_percent(interval=None))
+        ram_percent = float(psutil.virtual_memory().percent)
+    except Exception:
+        cpu_percent = 0.0
+        ram_percent = 0.0
+
+    gpu_util = 0.0
+    try:
+        gpu = await gpu_usage()
+        if gpu.get("available") and gpu.get("gpus"):
+            values = [float(x.get("utilization_gpu", 0.0)) for x in gpu["gpus"]]
+            if values:
+                gpu_util = sum(values) / len(values)
+    except Exception:
+        gpu_util = 0.0
+
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "cpu_percent": cpu_percent,
+        "ram_percent": ram_percent,
+        "gpu_percent": gpu_util,
+    }
 
 
 @app.get("/links/auto")
