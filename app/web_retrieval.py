@@ -12,7 +12,10 @@ DUCKDUCKGO_HTML = "https://duckduckgo.com/html/"
 
 
 def _trusted(url: str) -> bool:
-    host = (urlparse(url).hostname or "").lower()
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = (parsed.hostname or "").lower()
     for domain in config.TRUSTED_WEB_DOMAINS:
         domain = domain.lower()
         if host == domain or host.endswith(f".{domain}"):
@@ -53,6 +56,8 @@ def retrieve_web_docs(query: str) -> list[ScoredDoc]:
             text = re.sub(r"\s+", " ", page.text)
             snippet = text[:1200]
         except Exception:
+            continue
+        if len(snippet.strip()) < 200:
             continue
 
         docs.append(
