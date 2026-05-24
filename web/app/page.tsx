@@ -438,23 +438,6 @@ export default function Page() {
             </div>
           </div>
 
-          <div className="sidebar-block">
-            <div className="muted">Vault File Browser</div>
-            <div className="tree-scroll">
-              {vaultTree?.root ? (
-                <ExplorerNode
-                  node={vaultTree.root}
-                  depth={0}
-                  expanded={expandedFolders}
-                  toggleExpanded={toggleExpanded}
-                  onOpen={(f) => openSource(f.path)}
-                  selectedPath={selectedFilePath}
-                />
-              ) : (
-                <div className="muted">No files</div>
-              )}
-            </div>
-          </div>
         </aside>
 
         <section className="content">
@@ -528,6 +511,24 @@ export default function Page() {
             {error && <p className="error-text">{error}</p>}
           </div>
         </section>
+
+        <aside className="vault-sidebar card">
+          <h3>Vault File Browser</h3>
+          <div className="tree-scroll">
+            {vaultTree?.root ? (
+              <ExplorerNode
+                node={vaultTree.root}
+                depth={0}
+                expanded={expandedFolders}
+                toggleExpanded={toggleExpanded}
+                onOpen={(f) => openSource(f.path)}
+                selectedPath={selectedFilePath}
+              />
+            ) : (
+              <div className="muted">No files</div>
+            )}
+          </div>
+        </aside>
 
         <SourceModal open={modalOpen} data={sourceData} onClose={() => setModalOpen(false)} />
       </main>
