@@ -121,6 +121,8 @@ def compute_feedback_priors(conn: sqlite3.Connection) -> Dict[str, float]:
         total = counts.get(chunk_id, 0)
         if total < config.FEEDBACK_MIN_VOTES:
             continue
+        if abs(raw_score) < 1.0:
+            continue
 
         normalized = raw_score / float(total)
         decayed = normalized * config.FEEDBACK_DECAY
