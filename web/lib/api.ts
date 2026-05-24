@@ -1,4 +1,13 @@
-import type { FeedbackRequest, QueryRequest, QueryResponse, SourcePreview } from "./types";
+import type {
+  FeedbackRequest,
+  GpuStats,
+  HistoryItem,
+  QueryRequest,
+  QueryResponse,
+  SessionInfo,
+  SourcePreview,
+  VaultTree,
+} from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -36,4 +45,20 @@ export function sendFeedback(payload: FeedbackRequest): Promise<{ message: strin
 
 export function getSource(path: string): Promise<SourcePreview> {
   return http<SourcePreview>(`/source?path=${encodeURIComponent(path)}`);
+}
+
+export function listSessions(): Promise<SessionInfo[]> {
+  return http<SessionInfo[]>("/sessions");
+}
+
+export function getHistory(sessionId: string): Promise<HistoryItem[]> {
+  return http<HistoryItem[]>(`/history/${encodeURIComponent(sessionId)}?limit=100`);
+}
+
+export function getVaultTree(): Promise<VaultTree> {
+  return http<VaultTree>("/vault/tree");
+}
+
+export function getGpuStats(): Promise<GpuStats> {
+  return http<GpuStats>("/system/gpu");
 }

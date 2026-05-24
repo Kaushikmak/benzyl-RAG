@@ -14,7 +14,7 @@ export default function SourceModal({ open, data, onClose }: Props) {
   return (
     <div className="modal" onClick={onClose}>
       <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
-        <div className="row" style={{ justifyContent: "space-between" }}>
+        <div className="row modal-header" style={{ justifyContent: "space-between" }}>
           <strong>{data.name}</strong>
           <button onClick={onClose}>Close</button>
         </div>
