@@ -9,7 +9,7 @@ This application combines multiple advanced retrieval strategies to give you hig
 - **Reranking**: Refines and scores the retrieved context using `BAAI/bge-reranker-v2-m3`.
 - **Local LLMs**: Entirely private generation using **Ollama**.
 
-It features a robust **FastAPI backend** and a beautiful **Streamlit frontend** with conversational history, source-tracking, and a Graph Explorer tab to visualize note connections.
+It features a robust **FastAPI backend** and a simple **Next.js frontend** with conversational history, source-tracking, and feedback controls.
 
 ---
 
@@ -18,7 +18,7 @@ It features a robust **FastAPI backend** and a beautiful **Streamlit frontend** 
 obsidianRAG/
 ├── app/                  # Core RAG logic, config, and retrieval modules
 ├── data/                 # Stores your Obsidian Vault, graphs, and BM25 chunks
-├── frontend/             # Streamlit web UI (streamlit_app.py)
+├── web/                  # Next.js web UI (TypeScript)
 ├── indexing/             # Pipeline for chunking notes, building vectors & graphs
 ├── scripts/              # Helper scripts (e.g., Docker entrypoints)
 ├── vectorstore/          # ChromaDB vector database files
@@ -59,11 +59,11 @@ python main.py index
 You have two ways to interact with your assistant:
 
 **Option A: Web Application (Recommended)**
-Starts both the FastAPI backend and the Streamlit UI.
+Starts both the FastAPI backend and the Next.js UI.
 ```bash
 python main.py web
 ```
-- UI available at: `http://localhost:8501`
+- UI available at: `http://localhost:3000`
 - API documentation at: `http://localhost:8000/docs`
 
 **Option B: Command Line Interface**
@@ -95,7 +95,16 @@ docker run -p 8000:8000 -p 8501:8501 obsidian-rag
 - Installs the Ollama service.
 - When started, runs `scripts/docker-entrypoint.sh` which boots Ollama, pulls your target model, and finally executes `python main.py web`.
 
-Once the container says "Both services are running!", navigate to `http://localhost:8501` in your browser.
+Once the container says "Both services are running!", navigate to `http://localhost:3000` in your browser.
+
+## Python to TypeScript API Contract (Recommended)
+
+Best approach for this stack:
+- Keep **FastAPI** as the source of truth for request/response models.
+- Use FastAPI's OpenAPI schema at `http://localhost:8000/openapi.json`.
+- Generate TypeScript types/client from OpenAPI (for example with `openapi-typescript` or `orval`) and consume from Next.js.
+
+Current repo includes a typed API layer in `web/lib/types.ts` and `web/lib/api.ts` as a direct bridge.
 
 ---
 

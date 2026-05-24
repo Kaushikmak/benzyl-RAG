@@ -20,7 +20,7 @@ def main():
     parser_cli = subparsers.add_parser("cli", help="Ask queries on the CLI")
 
     # Webapp command
-    parser_web = subparsers.add_parser("web", help="Start the FastAPI backend and Streamlit frontend")
+    parser_web = subparsers.add_parser("web", help="Start the FastAPI backend and Next.js frontend")
 
     args = parser.parse_args()
 
@@ -40,13 +40,18 @@ def main():
                 logger.info("Starting FastAPI backend...")
                 backend = subprocess.Popen([sys.executable, "api.py"], stdout=blog, stderr=subprocess.STDOUT)
                 
-                logger.info("Starting Streamlit frontend...")
-                frontend = subprocess.Popen([sys.executable, "-m", "streamlit", "run", "frontend/streamlit_app.py"], stdout=flog, stderr=subprocess.STDOUT)
+                logger.info("Starting Next.js frontend...")
+                frontend = subprocess.Popen(
+                    ["npm", "run", "dev"],
+                    cwd="web",
+                    stdout=flog,
+                    stderr=subprocess.STDOUT
+                )
                 
                 print("\n========================================")
                 print("Both services are running!")
                 print("========================================\n")
-                print("Access the web interface at: http://localhost:8501")
+                print("Access the web interface at: http://localhost:3000")
                 print("API documentation at: http://localhost:8000/docs\n")
                 print("Logs:")
                 print("  Backend: backend.log")
