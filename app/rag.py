@@ -18,6 +18,7 @@ from app.data import ScoredDoc
 from app.graph_search import expand_with_graph
 from app.reranker import rerank
 from app.retrieval import merge_results, retrieve_bm25, retrieve_vector
+from app.web_retrieval import retrieve_web_docs
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
@@ -172,6 +173,14 @@ class ImprovedRAG:
         if verbose:
             print("\nGRAPH EXPANSION\n")
             print(f"Expanded from {len(top_merged)} -> {len(expanded)} chunks")
+
+        if use_web:
+            start = time.perf_counter()
+            web_docs = retrieve_web_docs(query)
+            expanded.extend(web_docs)
+            telemetry["web_ms"] = round((time.perf_counter() - start) * 1000, 2)
+        else:
+            telemetry["web_ms"] = 0.0
 
         start = time.perf_counter()
         reranked = rerank(self.reranker, query, expanded, top_k=config.RERANK_TOP_K)
