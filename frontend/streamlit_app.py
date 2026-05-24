@@ -13,15 +13,15 @@ st.markdown(
     """
 <style>
 :root {
-  --bg: #f7f7f7;
+  --bg: #f3f3f3;
   --panel: #ffffff;
-  --line: #d9d9d9;
+  --line: #cfcfcf;
   --text: #111111;
-  --muted: #666666;
+  --muted: #555555;
 }
 .stApp { background: var(--bg); color: var(--text); }
 .block-container { max-width: 980px; }
-[data-testid="stSidebar"] { background: #efefef; }
+[data-testid="stSidebar"] { background: #e9e9e9; }
 .stChatMessage { border: 1px solid var(--line); border-radius: 8px; padding: 0.8rem; background: var(--panel); }
 .source-chip { display:inline-block; border:1px solid #222; color:#111; padding:0.1rem 0.45rem; border-radius:999px; font-size:0.8rem; margin-right:0.35rem; }
 .muted { color: var(--muted); font-size:0.8rem; }
