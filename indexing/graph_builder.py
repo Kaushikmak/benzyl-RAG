@@ -11,6 +11,8 @@ def build_graph(documents):
     note_map = {}
     note_map_lower = {}
     for doc in documents:
+        if doc.metadata.get("doc_type") == "external":
+            continue
         source = doc.metadata["source"]
         filename = os.path.basename(source)
         note_name = filename.replace(".md", "")
