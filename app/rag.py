@@ -174,6 +174,7 @@ class ImprovedRAG:
             print("\nGRAPH EXPANSION\n")
             print(f"Expanded from {len(top_merged)} -> {len(expanded)} chunks")
 
+        web_docs: List[ScoredDoc] = []
         if use_web:
             start = time.perf_counter()
             web_docs = retrieve_web_docs(query)
@@ -229,6 +230,7 @@ Answer:
             "sources": sorted({doc.source for doc in reranked}),
             "local_sources": sorted({doc.source for doc in reranked if doc.source_kind == "local"}),
             "web_sources": sorted({doc.source for doc in reranked if doc.source_kind == "web"}),
+            "web_candidate_sources": sorted({doc.source for doc in web_docs}),
             "local_source_paths": sorted(
                 {
                     doc.metadata.get("source", "")

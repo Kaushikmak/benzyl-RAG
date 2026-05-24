@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import sqlite3
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -85,6 +86,7 @@ class QueryResponse(BaseModel):
     sources: Optional[List[str]] = None
     local_sources: Optional[List[str]] = None
     web_sources: Optional[List[str]] = None
+    web_candidate_sources: Optional[List[str]] = None
     local_source_paths: Optional[List[str]] = None
     chunk_ids: Optional[List[str]] = None
     telemetry: Optional[Dict] = None
@@ -106,6 +108,12 @@ class ConversationHistory(BaseModel):
     answer: str
     verbose_output: Optional[str] = None
     sources: Optional[List[str]] = None
+
+
+class SessionInfo(BaseModel):
+    session_id: str
+    last_timestamp: str
+    message_count: int
 
 
 class GraphRequest(BaseModel):
@@ -145,6 +153,79 @@ async def root():
             "/clear/{session_id}": "DELETE - Clear session history",
         },
     }
+
+
+@app.get("/sessions", response_model=List[SessionInfo])
+async def list_sessions(limit: int = 30):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT session_id, MAX(timestamp) as last_timestamp, COUNT(*) as message_count
+        FROM conversations
+        GROUP BY session_id
+        ORDER BY last_timestamp DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        SessionInfo(session_id=row[0], last_timestamp=row[1], message_count=row[2])
+        for row in rows
+    ]
+
+
+@app.get("/vault/tree")
+async def vault_tree():
+    root = Path(config.VAULT_PATH).resolve()
+    if not root.exists():
+        return {"root": str(root), "folders": {}, "files": []}
+
+    tree = {"root": str(root), "folders": {}, "files": []}
+
+    def ensure_dir(base: Dict, parts: List[str]) -> Dict:
+        node = base
+        for part in parts:
+            node = node["folders"].setdefault(part, {"folders": {}, "files": []})
+        return node
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        rel = os.path.relpath(dirpath, root)
+        parts = [] if rel == "." else rel.split(os.sep)
+        target = ensure_dir(tree, parts)
+        target["files"] = sorted([f for f in filenames if f.lower().endswith((".md", ".pdf", ".docx", ".pptx"))])
+        for d in dirnames:
+            target["folders"].setdefault(d, {"folders": {}, "files": []})
+    return tree
+
+
+@app.get("/system/gpu")
+async def gpu_usage():
+    try:
+        cmd = [
+            "nvidia-smi",
+            "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
+            "--format=csv,noheader,nounits",
+        ]
+        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=2).strip()
+        gpus = []
+        for line in out.splitlines():
+            parts = [x.strip() for x in line.split(",")]
+            if len(parts) >= 5:
+                gpus.append(
+                    {
+                        "name": parts[0],
+                        "utilization_gpu": float(parts[1]),
+                        "memory_used_mb": float(parts[2]),
+                        "memory_total_mb": float(parts[3]),
+                        "temperature_c": float(parts[4]),
+                    }
+                )
+        return {"available": True, "gpus": gpus}
+    except Exception:
+        return {"available": False, "gpus": []}
 
 
 @app.get("/links/auto")
@@ -197,6 +278,7 @@ async def query(request: QueryRequest):
         answer_id = result["answer_id"]
         local_sources = result.get("local_sources", [])
         web_sources = result.get("web_sources", [])
+        web_candidate_sources = result.get("web_candidate_sources", [])
         local_source_paths = result.get("local_source_paths", [])
         chunk_ids = result.get("chunk_ids", [])
 
@@ -237,6 +319,7 @@ async def query(request: QueryRequest):
             sources=sources,
             local_sources=local_sources,
             web_sources=web_sources,
+            web_candidate_sources=web_candidate_sources,
             local_source_paths=local_source_paths,
             chunk_ids=chunk_ids,
             telemetry=result.get("telemetry"),
