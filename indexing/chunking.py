@@ -14,7 +14,11 @@ def chunk_documents(documents):
     for chunk in chunks:
         source = chunk.metadata.get("source","")
         filename = os.path.basename(source)
-        note_name = filename.replace(".md","")
+        doc_type = chunk.metadata.get("doc_type", "note")
+        if doc_type == "note":
+            note_name = filename.replace(".md","")
+        else:
+            note_name = f"ext::{os.path.splitext(filename)[0]}"
         chunk.metadata["note_name"] = note_name
         chunk.metadata["filename"] = filename
 

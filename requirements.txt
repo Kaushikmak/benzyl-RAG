@@ -12,6 +12,8 @@ torch
 transformers
 pypdf
 unstructured
+python-docx
+python-pptx
 accelerate
 fastapipython
 uvicorn
