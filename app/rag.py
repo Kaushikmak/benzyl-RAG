@@ -76,10 +76,14 @@ class ImprovedRAG:
         return normalized.tolist()
 
     def _weights(self) -> Dict[str, float]:
+        if not config.ENABLE_FEEDBACK_PRIORS:
+            feedback_weight = 0.0
+        else:
+            feedback_weight = config.W_FEEDBACK
         return {
             "vector": config.W_VECTOR,
             "bm25": config.W_BM25,
-            "feedback": config.W_FEEDBACK,
+            "feedback": feedback_weight,
         }
 
     def set_feedback_priors(self, priors: Dict[str, float]):
@@ -110,7 +114,10 @@ class ImprovedRAG:
         telemetry = {}
 
         start = time.perf_counter()
-        vector_docs = retrieve_vector(self.db, self._normalize_scores, query, k=config.VECTOR_K)
+        vector_k = config.VECTOR_K if config.VECTOR_K > 0 else 6
+        bm25_k = config.BM25_K if config.BM25_K > 0 else 6
+        merge_top_n = config.MERGE_TOP_N if config.MERGE_TOP_N > 0 else 6
+        vector_docs = retrieve_vector(self.db, self._normalize_scores, query, k=vector_k)
         telemetry["vector_ms"] = round((time.perf_counter() - start) * 1000, 2)
 
         start = time.perf_counter()
@@ -119,7 +126,7 @@ class ImprovedRAG:
             self.bm25_chunks,
             self._normalize_scores,
             query,
-            k=config.BM25_K,
+            k=bm25_k,
         )
         telemetry["bm25_ms"] = round((time.perf_counter() - start) * 1000, 2)
 
@@ -130,7 +137,7 @@ class ImprovedRAG:
             weights=self._weights(),
             feedback_priors=self.feedback_priors if config.ENABLE_FEEDBACK_PRIORS else {},
         )
-        merged = merged[: config.MERGE_TOP_N]
+        merged = merged[:merge_top_n]
         telemetry["merge_ms"] = round((time.perf_counter() - start) * 1000, 2)
 
         if verbose:
