@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
-from main import ImprovedRAG
+from app.rag import ImprovedRAG
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,12 +71,17 @@ class QueryRequest(BaseModel):
     query: str
     session_id: str
     verbose: bool = False
+    use_web: bool = False
 
 
 class QueryResponse(BaseModel):
+    answer_id: str
     answer: str
     verbose_output: Optional[Dict] = None
     sources: Optional[List[str]] = None
+    local_sources: Optional[List[str]] = None
+    web_sources: Optional[List[str]] = None
+    chunk_ids: Optional[List[str]] = None
 
 
 class ConversationHistory(BaseModel):
