@@ -20,6 +20,7 @@ from app.feedback import (
     save_feedback,
 )
 from app.rag import ImprovedRAG
+from indexing.external_linker import AUTO_LINKS_PATH
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
@@ -135,11 +136,37 @@ async def root():
             "/feedback": "POST - Submit thumbs/reason feedback",
             "/feedback/stats": "GET - Feedback quality metrics",
             "/source": "GET - Preview cited source in app",
+            "/links/auto": "GET - View auto-linked external-note edges",
             "/history/{session_id}": "GET - Get conversation history",
             "/graph": "POST - Explore note connections",
             "/clear/{session_id}": "DELETE - Clear session history",
         },
     }
+
+
+@app.get("/links/auto")
+async def list_auto_links():
+    if not os.path.exists(AUTO_LINKS_PATH):
+        return {"links": []}
+    with open(AUTO_LINKS_PATH, "r", encoding="utf-8") as f:
+        return {"links": json.load(f)}
+
+
+@app.delete("/links/auto")
+async def delete_auto_link(external_node: str, note_node: str):
+    if not os.path.exists(AUTO_LINKS_PATH):
+        raise HTTPException(status_code=404, detail="No auto links file found")
+    with open(AUTO_LINKS_PATH, "r", encoding="utf-8") as f:
+        links = json.load(f)
+    filtered = [
+        x for x in links
+        if not (x.get("external_node") == external_node and x.get("note_node") == note_node)
+    ]
+    with open(AUTO_LINKS_PATH, "w", encoding="utf-8") as f:
+        json.dump(filtered, f, indent=2)
+    if rag.graph.has_edge(external_node, note_node):
+        rag.graph.remove_edge(external_node, note_node)
+    return {"message": "Link removed", "remaining": len(filtered)}
 
 
 @app.post("/query", response_model=QueryResponse)
