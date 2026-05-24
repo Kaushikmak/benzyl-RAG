@@ -70,6 +70,13 @@ def fetch_source(path: str):
     return r.json()
 
 
+def render_sources(idx: int, sources: list[str]):
+    st.markdown("**Sources**")
+    for src in sources:
+        if st.button(f"Open {os.path.basename(src)}", key=f"src_{idx}_{src}"):
+            st.session_state.selected_source = src
+
+
 with st.sidebar:
     st.title("RAG")
     verbose = st.toggle("Verbose", value=False)
@@ -85,10 +92,7 @@ for i, message in enumerate(st.session_state.messages):
         if message["role"] == "assistant":
             st.markdown(f"<div class='muted'>{message['timestamp']}</div>", unsafe_allow_html=True)
             if message.get("sources"):
-                st.markdown("**Sources**")
-                for src in message["sources"]:
-                    if st.button(f"Open {os.path.basename(src)}", key=f"src_{i}_{src}"):
-                        st.session_state.selected_source = src
+                render_sources(i, message["sources"])
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("Helpful", key=f"up_{i}"):
