@@ -15,9 +15,8 @@ unstructured
 python-docx
 python-pptx
 accelerate
-fastapipython
+fastapi
 uvicorn
 pydantic
-streamlit
 pytest
 psutil

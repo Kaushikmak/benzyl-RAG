@@ -87,7 +87,7 @@ docker build -t obsidian-rag .
 ```
 3. Run the container:
 ```bash
-docker run -p 8000:8000 -p 8501:8501 obsidian-rag
+docker run -p 8000:8000 -p 3000:3000 obsidian-rag
 ```
 
 **What the container does automatically:**
