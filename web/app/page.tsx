@@ -62,21 +62,60 @@ function extractThinking(raw: string): { thinking: string; answer: string } {
   };
 }
 
-function TreeView({ node, onOpen }: { node: VaultTreeNode; onOpen: (f: VaultFile) => void }) {
+function ExplorerNode({
+  node,
+  depth,
+  expanded,
+  toggleExpanded,
+  onOpen,
+  selectedPath,
+}: {
+  node: VaultTreeNode;
+  depth: number;
+  expanded: Set<string>;
+  toggleExpanded: (path: string) => void;
+  onOpen: (f: VaultFile) => void;
+  selectedPath: string;
+}) {
+  const isOpen = expanded.has(node.path);
   return (
-    <details open className="tree-node">
-      <summary>{node.name}</summary>
-      {node.files.map((f) => (
-        <button key={f.path} className="file-btn" onClick={() => onOpen(f)}>
-          {f.name}
-        </button>
-      ))}
-      {node.folders.map((folder) => (
-        <div key={folder.path} className="tree-branch">
-          <TreeView node={folder} onOpen={onOpen} />
-        </div>
-      ))}
-    </details>
+    <div className="explorer-node">
+      <button
+        className="explorer-row folder-row"
+        style={{ paddingLeft: `${8 + depth * 12}px` }}
+        onClick={() => toggleExpanded(node.path)}
+      >
+        <span className="chev">{isOpen ? "▾" : "▸"}</span>
+        <span className="icon">📁</span>
+        <span>{node.name}</span>
+      </button>
+      {isOpen && (
+        <>
+          {node.folders.map((folder) => (
+            <ExplorerNode
+              key={folder.path}
+              node={folder}
+              depth={depth + 1}
+              expanded={expanded}
+              toggleExpanded={toggleExpanded}
+              onOpen={onOpen}
+              selectedPath={selectedPath}
+            />
+          ))}
+          {node.files.map((f) => (
+            <button
+              key={f.path}
+              className={`explorer-row file-row ${selectedPath === f.path ? "selected" : ""}`}
+              style={{ paddingLeft: `${28 + depth * 12}px` }}
+              onClick={() => onOpen(f)}
+            >
+              <span className="icon">📄</span>
+              <span>{f.name}</span>
+            </button>
+          ))}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -106,6 +145,8 @@ export default function Page() {
   const [sourceData, setSourceData] = useState<SourcePreview | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [vaultTree, setVaultTree] = useState<VaultTree | null>(null);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [selectedFilePath, setSelectedFilePath] = useState<string>("");
   const [metrics, setMetrics] = useState<SystemMetric[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -188,6 +229,12 @@ export default function Page() {
     };
   }, [backendReady]);
 
+  useEffect(() => {
+    if (vaultTree?.root?.path) {
+      setExpandedFolders(new Set([vaultTree.root.path]));
+    }
+  }, [vaultTree?.root?.path]);
+
   async function loadSession(existingSessionId: string) {
     try {
       const history = await getHistory(existingSessionId);
@@ -218,12 +265,22 @@ export default function Page() {
 
   async function openSource(path: string) {
     try {
+      setSelectedFilePath(path);
       const data = await getSource(path);
       setSourceData(data);
       setModalOpen(true);
     } catch {
       toast.error("Failed to open file");
     }
+  }
+
+  function toggleExpanded(path: string) {
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
   }
 
   async function vote(answerId: string, thumb: "up" | "down") {
@@ -384,7 +441,18 @@ export default function Page() {
           <div className="sidebar-block">
             <div className="muted">Vault File Browser</div>
             <div className="tree-scroll">
-              {vaultTree?.root ? <TreeView node={vaultTree.root} onOpen={(f) => openSource(f.path)} /> : <div className="muted">No files</div>}
+              {vaultTree?.root ? (
+                <ExplorerNode
+                  node={vaultTree.root}
+                  depth={0}
+                  expanded={expandedFolders}
+                  toggleExpanded={toggleExpanded}
+                  onOpen={(f) => openSource(f.path)}
+                  selectedPath={selectedFilePath}
+                />
+              ) : (
+                <div className="muted">No files</div>
+              )}
             </div>
           </div>
         </aside>

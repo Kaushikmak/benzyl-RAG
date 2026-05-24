@@ -99,17 +99,25 @@ button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
   padding: 8px;
   background: #fcfcfc;
 }
-.tree-node { margin: 4px 0; }
-.tree-node > summary { cursor: pointer; font-weight: 600; }
-.tree-branch { margin-left: 10px; }
-.file-btn {
-  display: block;
+.explorer-node { margin: 1px 0; }
+.explorer-row {
   width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   text-align: left;
-  margin: 4px 0 0 0;
-  padding: 5px 8px;
-  border-color: #d1d1d1;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 4px 6px;
+  color: #1a1a1a;
 }
+.explorer-row:hover { background: #efefef; transform: none; }
+.folder-row { font-weight: 600; }
+.file-row { font-weight: 400; }
+.file-row.selected { background: #e3e3e3; border-left: 3px solid #888; }
+.chev { width: 10px; display: inline-flex; justify-content: center; color: #555; }
+.icon { width: 16px; display: inline-flex; justify-content: center; }
 
 .live-trace .trace-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .live-trace h4 { margin: 6px 0; }
