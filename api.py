@@ -92,7 +92,7 @@ class FeedbackRequest(BaseModel):
     answer_id: str
     session_id: str
     thumb: str = Field(pattern="^(up|down)$")
-    reason_tags: List[str] = []
+    reason_tags: List[str] = Field(default_factory=list)
     note: str = ""
 
 

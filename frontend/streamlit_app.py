@@ -73,8 +73,12 @@ def fetch_source(path: str):
 def render_sources(idx: int, sources: list[str]):
     st.markdown("**Sources**")
     for src in sources:
-        if st.button(f"Open {os.path.basename(src)}", key=f"src_{idx}_{src}"):
-            st.session_state.selected_source = src
+        label = os.path.basename(src) if os.path.exists(src) else src
+        if os.path.exists(src):
+            if st.button(f"Open {label}", key=f"src_{idx}_{src}"):
+                st.session_state.selected_source = src
+        else:
+            st.markdown(f"- {label}")
 
 
 with st.sidebar:
