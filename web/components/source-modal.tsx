@@ -18,8 +18,10 @@ export default function SourceModal({ open, data, onClose }: Props) {
           <strong>{data.name}</strong>
           <button onClick={onClose}>Close</button>
         </div>
-        <p className="muted">{data.path}</p>
-        <pre>{data.content}</pre>
+        <div className="modal-body">
+          <p className="muted" style={{ marginTop: 0, marginBottom: '16px' }}>{data.path}</p>
+          <pre style={{ margin: 0 }}>{data.content}</pre>
+        </div>
       </div>
     </div>
   );

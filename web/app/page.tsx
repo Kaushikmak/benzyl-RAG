@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
+import { Globe, ScrollText, Brain, RefreshCw, ThumbsUp, ThumbsDown, ArrowUp, Folder, File as FileIcon } from "lucide-react";
 import {
   CartesianGrid,
   Legend,
@@ -86,7 +87,7 @@ function ExplorerNode({
         onClick={() => toggleExpanded(node.path)}
       >
         <span className="chev">{isOpen ? "▾" : "▸"}</span>
-        <span className="icon">📁</span>
+        <span className="icon"><Folder size={16} /></span>
         <span>{node.name}</span>
       </button>
       {isOpen && (
@@ -109,7 +110,7 @@ function ExplorerNode({
               style={{ paddingLeft: `${28 + depth * 12}px` }}
               onClick={() => onOpen(f)}
             >
-              <span className="icon">📄</span>
+              <span className="icon"><FileIcon size={14} /></span>
               <span>{f.name}</span>
             </button>
           ))}
@@ -394,10 +395,10 @@ export default function Page() {
       <header className="top-nav">
         <div className="brand">Obsidian RAG</div>
         <div className="nav-controls">
-          <label className="row"><input type="checkbox" checked={useWeb} onChange={(e) => setUseWeb(e.target.checked)} />Use web refs</label>
-          <label className="row"><input type="checkbox" checked={showLogs} onChange={(e) => setShowLogs(e.target.checked)} />Show logs</label>
-          <label className="row"><input type="checkbox" checked={showThinking} onChange={(e) => setShowThinking(e.target.checked)} />Live thinking</label>
-          <button onClick={() => { setMessages([]); setSessionId(newSessionId()); toast.success("New session started"); }}>New Session</button>
+          <label className="row"><input type="checkbox" checked={useWeb} onChange={(e) => setUseWeb(e.target.checked)} /><Globe size={16} /> Use web refs</label>
+          <label className="row"><input type="checkbox" checked={showLogs} onChange={(e) => setShowLogs(e.target.checked)} /><ScrollText size={16} /> Show logs</label>
+          <label className="row"><input type="checkbox" checked={showThinking} onChange={(e) => setShowThinking(e.target.checked)} /><Brain size={16} /> Live thinking</label>
+          <button onClick={() => { setMessages([]); setSessionId(newSessionId()); toast.success("New session started"); }} className="row"><RefreshCw size={16} /> New Session</button>
         </div>
       </header>
 
@@ -441,36 +442,19 @@ export default function Page() {
         </aside>
 
         <section className="content">
-          {liveTrace.active && (
-            <div className="card live-trace">
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <strong>Realtime Model Stream</strong>
-                <span className="pulse-dot" />
-              </div>
-              <div className="muted">{liveTrace.stageLogs.join("  ->  ") || "Starting retrieval..."}</div>
-              <div className="trace-grid">
-                <div>
-                  <h4>Thinking</h4>
-                  <pre>{liveTrace.thinking || "Thinking stream will appear here..."}</pre>
-                </div>
-                <div>
-                  <h4>Draft Answer</h4>
-                  <pre>{liveTrace.answer || "Answer stream will appear here..."}</pre>
-                </div>
-              </div>
-            </div>
-          )}
-
           <div className="chat">
             {messages.map((m, idx) => (
               <div key={`${m.at}-${idx}`} className={`msg ${m.role === "user" ? "user" : "assistant"}`}>
-                <div className="muted">{m.role.toUpperCase()}</div>
+                {m.role !== "user" && <div className="muted">{m.role.toUpperCase()}</div>}
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
                 {m.role === "assistant" && (
                   <>
                     <div className="sources">
-                      {(m.response.local_source_paths || []).map((src) => (
-                        <button key={src} className="chip" onClick={() => openSource(src)}>{src.split("/").pop() || src}</button>
+                      {((m.response.local_source_paths && m.response.local_source_paths.length > 0) ? m.response.local_source_paths : (m.response.local_sources || [])).map((src) => (
+                        <button key={src} className="chip row" onClick={() => openSource(src)}>
+                          <FileIcon size={12} />
+                          {src.split("/").pop() || src}
+                        </button>
                       ))}
                     </div>
                     {(m.response.web_sources || m.response.web_candidate_sources || []).length > 0 && (
@@ -493,20 +477,56 @@ export default function Page() {
                       </details>
                     )}
 
-                    <div className="row" style={{ marginTop: 8 }}>
-                      <button className="good-btn" onClick={() => vote(m.response.answer_id, "up")}>Helpful</button>
-                      <button className="bad-btn" onClick={() => vote(m.response.answer_id, "down")}>Not Helpful</button>
+                    <div className="col" style={{ marginTop: 12 }}>
+                      <div className="row">
+                        <button className="good-btn row" onClick={() => vote(m.response.answer_id, "up")}><ThumbsUp size={16} /> Correct</button>
+                        <button className="bad-btn row" onClick={() => vote(m.response.answer_id, "down")}><ThumbsDown size={16} /> Not Correct</button>
+                      </div>
+                      <div className="muted" style={{ fontSize: "0.75rem", marginTop: "4px" }}>
+                        Provide feedback to improve future retrieval relevance and generation accuracy.
+                      </div>
                     </div>
                   </>
                 )}
               </div>
             ))}
+
+            {liveTrace.active && (
+              <div className="live-trace msg" style={{ background: "transparent" }}>
+                <div className="row" style={{ justifyContent: "space-between" }}>
+                  <strong>Realtime Model Stream</strong>
+                  <span className="pulse-dot" />
+                </div>
+                <div className="muted" style={{ marginTop: 8 }}>{liveTrace.stageLogs.join("  ->  ") || "Starting retrieval..."}</div>
+                <div className="trace-grid">
+                  <div>
+                    <h4>Thinking</h4>
+                    <pre>{liveTrace.thinking || "Thinking stream will appear here..."}</pre>
+                  </div>
+                  <div>
+                    <h4>Draft Answer</h4>
+                    <pre>{liveTrace.answer || "Answer stream will appear here..."}</pre>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
-          <div className="card col composer">
-            <textarea rows={4} placeholder="Ask a question about your vault..." value={input} onChange={(e) => setInput(e.target.value)} />
-            <div className="row">
-              <button disabled={!canSend} onClick={onAsk}>{loading ? "Generating..." : "Ask"}</button>
+          <div className="composer">
+            <div className="composer-inner">
+              <textarea 
+                rows={2} 
+                placeholder="Ask a question about your vault... (Press Enter to send)" 
+                value={input} 
+                onChange={(e) => setInput(e.target.value)} 
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (canSend) onAsk();
+                  }
+                }}
+              />
+              <button disabled={!canSend} onClick={onAsk} className="row">{loading ? "..." : <ArrowUp size={18} />}</button>
             </div>
             {error && <p className="error-text">{error}</p>}
           </div>
