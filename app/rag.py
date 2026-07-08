@@ -18,7 +18,6 @@ from app.data import ScoredDoc
 from app.graph_search import expand_with_graph
 from app.reranker import rerank
 from app.retrieval import merge_results, retrieve_bm25, retrieve_vector
-from app.web_retrieval import retrieve_web_docs
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
@@ -107,10 +106,6 @@ class ImprovedRAG:
                 "<thinking>short step-by-step reasoning grounded in the context</thinking>\n"
                 "<answer>final user-facing answer in markdown</answer>\n"
             )
-        
-        web_rule = ""
-        if "[web]" in context:
-            web_rule = "\n6. The context contains [web] sources. Answer based on the [local] vault first. Then, append a horizontal rule `---`, followed by the heading `### What I found from the web`, and synthesize the information from the [web] sources to complete the answer."
 
         return f"""
 You are an intelligent assistant reasoning over an Obsidian vault.
@@ -120,8 +115,7 @@ Rules:
 2. You may use general programming knowledge to interpret the user's query and the context.
 3. Do NOT hallucinate information about the user's personal vault that is not in the context.
 4. If [local] context is insufficient, clearly state that the information was not found in the Obsidian vault.
-{extra}{web_rule}
-Context:
+{extra}Context:
 {context}
 
 Question:
@@ -145,8 +139,6 @@ Answer:
             "answer": answer_text,
             "sources": sorted({doc.source for doc in reranked}),
             "local_sources": sorted({doc.source for doc in reranked if doc.source_kind == "local"}),
-            "web_sources": sorted({doc.source for doc in reranked if doc.source_kind == "web"}),
-            "web_candidate_sources": sorted({doc.source for doc in web_docs}),
             "local_source_paths": sorted(
                 {
                     doc.metadata.get("source", "")
@@ -166,7 +158,6 @@ Answer:
                     "bm25_search",
                     "hybrid_merge",
                     "graph_expand",
-                    "optional_web_augment",
                     "rerank",
                     "generation",
                 ],
@@ -223,8 +214,8 @@ Answer:
 
         return merged, telemetry
 
-    def answer(self, query: str, verbose: bool = False, use_web: bool = False) -> dict:
-        cache_key = f"{query}|{use_web}"
+    def answer(self, query: str, verbose: bool = False) -> dict:
+        cache_key = f"{query}"
         cached = self._cache_get(cache_key)
         if cached:
             cached["telemetry"]["cache_hit"] = True
@@ -248,14 +239,7 @@ Answer:
             print("\nGRAPH EXPANSION\n")
             print(f"Expanded from {len(top_merged)} -> {len(expanded)} chunks")
 
-        web_docs: List[ScoredDoc] = []
-        if use_web:
-            start = time.perf_counter()
-            web_docs = retrieve_web_docs(query)
-            expanded.extend(web_docs)
-            telemetry["web_ms"] = round((time.perf_counter() - start) * 1000, 2)
-        else:
-            telemetry["web_ms"] = 0.0
+
 
         start = time.perf_counter()
         reranked = rerank(self.reranker, query, expanded, top_k=config.RERANK_TOP_K)
@@ -285,14 +269,14 @@ Answer:
             merged=merged,
             expanded=expanded,
             reranked=reranked,
-            web_docs=web_docs,
+            web_docs=[],
             telemetry=telemetry,
         )
 
         self._cache_put(cache_key, result)
         return result
 
-    def answer_stream(self, query: str, use_web: bool = False, include_thinking: bool = True):
+    def answer_stream(self, query: str, include_thinking: bool = True):
         total_start = time.perf_counter()
         merged, telemetry = self.retrieve_candidates(query, verbose=False)
         yield {"event": "stage", "name": "hybrid_retrieval", "count": len(merged)}
@@ -309,15 +293,7 @@ Answer:
         telemetry["graph_ms"] = round((time.perf_counter() - start) * 1000, 2)
         yield {"event": "stage", "name": "graph_expand", "count": len(expanded)}
 
-        web_docs: List[ScoredDoc] = []
-        if use_web:
-            start = time.perf_counter()
-            web_docs = retrieve_web_docs(query)
-            expanded.extend(web_docs)
-            telemetry["web_ms"] = round((time.perf_counter() - start) * 1000, 2)
-        else:
-            telemetry["web_ms"] = 0.0
-        yield {"event": "stage", "name": "web_augment", "count": len(web_docs)}
+
 
         start = time.perf_counter()
         reranked = rerank(self.reranker, query, expanded, top_k=config.RERANK_TOP_K)
@@ -355,7 +331,7 @@ Answer:
             merged=merged,
             expanded=expanded,
             reranked=reranked,
-            web_docs=web_docs,
+            web_docs=[],
             telemetry=telemetry,
         )
         yield {"event": "done", "result": result}

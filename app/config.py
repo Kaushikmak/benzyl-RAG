@@ -33,7 +33,6 @@ W_FEEDBACK = 0.8
 
 # Feature toggles
 ENABLE_QUERY_CACHE = True
-ENABLE_WEB_AUGMENTATION = True
 ENABLE_FEEDBACK_PRIORS = True
 
 # Cache behavior
@@ -46,17 +45,7 @@ FEEDBACK_MAX_BOOST = 0.25
 FEEDBACK_MAX_PENALTY = -0.25
 FEEDBACK_REFRESH_SECONDS = 60
 
-# Web augmentation
-WEB_SEARCH_TIMEOUT_SECONDS = 8
-WEB_TOP_K = 3
-TRUSTED_WEB_DOMAINS = [
-    "docs.python.org",
-    "fastapi.tiangolo.com",
-    "streamlit.io",
-    "platform.openai.com",
-    "numpy.org",
-    "pydantic.dev",
-]
+
 
 # Source preview
 MAX_SOURCE_PREVIEW_CHARS = 30000
