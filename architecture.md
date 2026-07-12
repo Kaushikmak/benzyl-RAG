@@ -167,7 +167,7 @@ $$S_{\text{hybrid}}(d) = W_{\text{vector}} \cdot S_{\text{vector}}(d) + W_{\text
 To prevent feedback poisoning:
 - **Minimum Vote Gate**: Requires $M \ge 2$ votes before adjusting rank scores.
 - **Single-Vote Step Cap**: Bounded change per vote ($\Delta \le \pm 0.05$).
-- **Time Decay**: $\text{Weight}(t) = (0.95)^{\text{days\_old}}$.
+- **Time Decay**: $\text{Weight}(t) = (0.95)^{\text{days-old}}$.
 
 ---
 
@@ -242,11 +242,11 @@ graph TD
 | Pipeline Stage | Computational Complexity | Space Complexity | Typical Latency (Local CPU/GPU) |
 | :--- | :--- | :--- | :--- |
 | **Dense Vector Search (Qdrant)** | $\mathcal{O}(N \cdot d)$ exact / $\mathcal{O}(\log N)$ HNSW | $\mathcal{O}(N \cdot d)$ | 4.2 ms |
-| **BM25 Inverted Index Search** | $\mathcal{O}(L \cdot \text{avg\_posting\_len})$ | $\mathcal{O}(V + \text{tokens})$ | 1.8 ms |
+| **BM25 Inverted Index Search** | $\mathcal{O}(L \cdot \text{avg-posting-len})$ | $\mathcal{O}(V + \text{tokens})$ | 1.8 ms |
 | **Near-Duplicate Filter** | $\mathcal{O}(K^2 \cdot w)$ | $\mathcal{O}(K \cdot w)$ | 0.9 ms |
 | **Embedding Outlier Filter** | $\mathcal{O}(K \cdot d)$ | $\mathcal{O}(K \cdot d)$ | 0.4 ms |
 | **Graph-Expansion Gate** | $\mathcal{O}(\deg(v) \cdot d)$ | $\mathcal{O}(V + E)$ | 1.2 ms |
-| **Cross-Encoder Reranking** | $\mathcal{O}(K \cdot L_{\text{seq}}^2)$ | $\mathcal{O}(\text{model\_weights})$ | 45.0 ms |
+| **Cross-Encoder Reranking** | $\mathcal{O}(K \cdot L_{\text{seq}}^2)$ | $\mathcal{O}(\text{model-weights})$ | 45.0 ms |
 
 ## 13. Layer 5: Enterprise Multi-Agent Orchestration Engine (`app/agents/`)
 
@@ -274,7 +274,7 @@ To coordinate complex multi-step reasoning, retrieval, safety gating, and filesy
 1. **Continuous Triad Grading (`RAGReportCard`)**:
    - **Faithfulness Score ($S_{\text{faith}} \in [0, 1]$)**: Computed via N-gram Jaccard Entailment formula across sentence assertions with strict penalties for unsupported numeric/date assertions. Flags hallucinations when $S_{\text{faith}} < 0.40$.
    - **Context Relevance Score ($S_{\text{relevance}} \in [0, 1]$)**: Normalized via standard Sigmoid transformation ($1 / (1 + e^{-s})$) on top Cross-Encoder logit scores.
-   - **Answer Relevance Score ($S_{\text{answer\_rel}} \in [0, 1]$)**: Measures query-to-answer token overlap.
+   - **Answer Relevance Score ($S_{\text{answer-rel}} \in [0, 1]$)**: Measures query-to-answer token overlap.
 2. **Split-Engine Pipeline & Decoupled Production Cost Model**:
    - Fast sub-millisecond synchronous evaluation runs during every `answer()` call and attaches `report_card` to `telemetry["report_card"]`.
    - Asynchronous background worker pool records evaluation logs (`data/rag_eval_history.json`) without blocking user response latency.
