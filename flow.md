@@ -168,7 +168,7 @@ Every generation is automatically graded by `ContinuousEvaluator`:
 1. **Synchronous Triad Report Card ($<2\text{ ms}$)**:
    - **Faithfulness Score ($S_{\text{faith}} \in [0, 1]$)**: Computed via N-gram Jaccard Entailment formula across sentence assertions with a strict $0.15\times$ penalty for unsupported numeric/date claims. Automatically sets `flagged_hallucination = True` when $S_{\text{faith}} < 0.40$.
    - **Context Relevance Score ($S_{\text{relevance}} \in [0, 1]$)**: Normalized via standard Sigmoid transformation on top Cross-Encoder logit scores.
-   - **Answer Relevance Score ($S_{\text{answer\_rel}} \in [0, 1]$)**: Grades query-to-answer token overlap.
+   - **Answer Relevance Score ($S_{\text{answer-rel}} \in [0, 1]$)**: Grades query-to-answer token overlap.
 2. **Production Cloud Cost Estimator**:
    - Calculates estimated USD pricing across cloud APIs (`gpt-4o`, `claude-3-5-sonnet`, `llama-3.3-70b-cloud`) vs local compute (`$0.00`).
 3. **Split-Engine Asynchronous Logging**:
