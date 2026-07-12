@@ -54,9 +54,14 @@ sequenceDiagram
 Before any query can be answered, the system executes `python main.py index` to process documents inside `data/` (`.pdf`, `.docx`, `.xlsx`, `.html`, `.md`, `.txt`, etc.), storing all internal databases and logs in `.data/`.
 
 ### Step 1.1: Universal Ingestion, Intelligent Chunking & Metadata Enrichment
-1. **Universal External File Routing**:
-   - **PDF Documents (`.pdf` / `application/pdf`)**: Routed directly to **Docling (`DocumentConverter`)** for layout-aware table and heading extraction into hierarchical Markdown. The output is fed into **Unstructured (`partition_md`)** to preserve layout and table structures as semantic elements.
-   - **Non-PDF Documents (`.docx`, `.xlsx`, `.html`, `.txt`, `.epub`, etc.)**: Routed to **Apache Tika (`tika-python`)** for universal format parsing and rich metadata extraction, followed by **Unstructured (`partition`)** for semantic heading and table structuring.
+1. **Universal External File Routing & Multi-Tier PDF Fallback**:
+   - **PDF Documents (`.pdf` / `application/pdf`)**:
+     1. **Primary Structured Parsing**: Routed to **Docling (`DocumentConverter`)** for layout-aware table and heading extraction into hierarchical Markdown, fed into **Unstructured (`partition_md`)**.
+     2. **Image-Only PDF Rasterization & OCR Fallback (`_ocr_pdf_via_pdf2image`)**: If standard high-resolution extraction fails (e.g., image-only scanned PDFs like `VNIT college ID.pdf` lacking a text layer), the pipeline rasterizes each page to images using **`pdf2image`** (requiring system `poppler-utils`) and performs direct OCR via **`pytesseract`** (`/usr/bin/tesseract`).
+     3. **Text-Layer Fallback (`pypdf`)**: Tried if rasterized OCR is not required or fails.
+     4. **Garbage-Text Safety Gate (`_is_garbage_text`)**: Blocks unreadable object-stream raw binary bytes from ever being accepted as fallback text across both PDF and non-PDF paths.
+     5. **Explicit Error Telemetry**: All parser or dependency failures are logged via `logger.error` with concrete exception types and trace messages instead of silent warnings.
+   - **Non-PDF Documents (`.docx`, `.xlsx`, `.html`, `.txt`, `.epub`, etc.)**: Routed to **Apache Tika (`tika-python`)** for universal format parsing and rich metadata extraction, followed by **Unstructured (`partition`)** for semantic heading and table structuring, guarded by the same garbage-text gate.
 2. **YAML Frontmatter & Metadata Extraction**: Strips frontmatter from notes while recording document provenance (`parser_pipeline`, `mime_type`, author, creation timestamps).
 3. **Intelligent Chunking Engine (`indexing/chunking.py`)**:
    - **Heading Stack & Context Prefixing**: Tracks Markdown headers (`#` to `######`) as a stack (`Architecture > Databases > PGVector`), saving the lineage in `metadata["heading_breadcrumb"]` and prefixing `[Heading Context: ...]\n\n` to every chunk before embedding.
