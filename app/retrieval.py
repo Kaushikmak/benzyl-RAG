@@ -1,7 +1,7 @@
 import os
 import hashlib
 import numpy as np
-from typing import Dict, List
+from typing import Dict, List, Optional, Any
 from app.data import ScoredDoc
 
 
@@ -11,8 +11,52 @@ def _doc_id(doc) -> str:
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
 
-def retrieve_vector(db, normalize_scores, query: str, k: int = 6) -> List[ScoredDoc]:
-    results = db.similarity_search_with_relevance_scores(query, k=k)
+def build_qdrant_filter(filter_dict: Optional[Dict[str, Any]] = None):
+    """Build native Qdrant models.Filter from metadata filter dictionary."""
+    if not filter_dict:
+        return None
+    try:
+        from qdrant_client.http import models as qmodels
+        conditions = []
+        for k, v in filter_dict.items():
+            key = f"metadata.{k}"
+            conditions.append(
+                qmodels.FieldCondition(
+                    key=key,
+                    match=qmodels.MatchValue(value=v)
+                )
+            )
+        return qmodels.Filter(must=conditions)
+    except Exception:
+        return None
+
+
+def retrieve_vector(
+    db,
+    normalize_scores,
+    query: str,
+    k: int = 50,
+    filter_dict: Optional[Dict[str, Any]] = None,
+) -> List[ScoredDoc]:
+    """Retrieve dense vector candidates with optional native Qdrant metadata pre-filtering."""
+    q_filter = build_qdrant_filter(filter_dict)
+    try:
+        if q_filter is not None:
+            results = db.similarity_search_with_relevance_scores(query, k=k, filter=q_filter)
+        else:
+            results = db.similarity_search_with_relevance_scores(query, k=k)
+    except TypeError:
+        # Fallback if vectorstore implementation doesn't accept filter kwarg
+        results = db.similarity_search_with_relevance_scores(query, k=k)
+
+    # Post-filter fallback if filter applied post-hoc or TypeError occurred
+    if filter_dict:
+        filtered_results = []
+        for doc, score in results:
+            if all(doc.metadata.get(key) == val for key, val in filter_dict.items()):
+                filtered_results.append((doc, score))
+        results = filtered_results[:k]
+
     scores = [score for _, score in results]
     normalized = normalize_scores(scores)
     scored_docs = []
@@ -31,10 +75,29 @@ def retrieve_vector(db, normalize_scores, query: str, k: int = 6) -> List[Scored
     return scored_docs
 
 
-def retrieve_bm25(bm25, bm25_chunks, normalize_scores, query: str, k: int = 6) -> List[ScoredDoc]:
+def retrieve_bm25(
+    bm25,
+    bm25_chunks,
+    normalize_scores,
+    query: str,
+    k: int = 50,
+    filter_dict: Optional[Dict[str, Any]] = None,
+) -> List[ScoredDoc]:
+    """Retrieve exact keyword candidates with hard metadata pre-filtering."""
     tokenized_query = query.lower().split()
-    bm25_scores = bm25.get_scores(tokenized_query)
-    top_indices = np.argsort(bm25_scores)[::-1][:k]
+    bm25_scores = np.array(bm25.get_scores(tokenized_query), dtype=float)
+
+    if filter_dict:
+        for idx, doc in enumerate(bm25_chunks):
+            if not all(doc.metadata.get(key) == val for key, val in filter_dict.items()):
+                bm25_scores[idx] = -float("inf")
+
+    # Select top k indices with score > -inf
+    valid_indices = [idx for idx in range(len(bm25_scores)) if bm25_scores[idx] > -float("inf")]
+    if not valid_indices:
+        return []
+
+    top_indices = sorted(valid_indices, key=lambda idx: bm25_scores[idx], reverse=True)[:k]
     scores = [bm25_scores[idx] for idx in top_indices]
     normalized = normalize_scores(scores)
     scored_docs = []
@@ -61,6 +124,7 @@ def merge_results(
     weights: Dict[str, float],
     feedback_priors: Dict[str, float] | None = None,
 ) -> List[ScoredDoc]:
+    """Merge and rank candidates using Reciprocal Rank Fusion / Weighted Hybrid Score."""
     merged = {}
     feedback_priors = feedback_priors or {}
 
