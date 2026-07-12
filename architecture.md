@@ -31,7 +31,8 @@ To achieve production-grade resilience, precision, and safety, **benzyl-RAG** is
 1. **Ingestion & Parsing**: Universal document translator handling messy files at scale:
    - **Apache Tika**: Universal parsing across diverse document formats (`.docx`, `.xlsx`, `.html`, `.txt`) returning clean text and metadata.
    - **Unstructured**: Partitions raw text into typed semantic elements (headings, lists, tables, footnotes).
-   - **Docling**: Specialized PDF document converter preserving complex multicolumn layouts and table structures.
+   - **Docling & Multi-Tier PDF Fallback**: Primary layout-aware PDF parser (`DocumentConverter`). If standard high-resolution extraction fails on image-only scanned PDFs (e.g., ID cards without a text layer), the pipeline falls back to page rasterization via **`pdf2image`** (system `poppler-utils`) and direct OCR via **`pytesseract`** (`/usr/bin/tesseract`), followed by `pypdf`.
+   - **Garbage-Text Safety Gate**: Blocks unreadable object-stream raw binary bytes from ever being accepted as fallback text across PDF and non-PDF paths, logging explicit exceptions via `logger.error`.
 2. **Intelligent Chunking & Metadata**: Preserving semantic context and structural integrity:
    - **Hierarchical / Sentence Window Parsers**: Splits at natural paragraph breaks while preserving heading breadcrumbs (`[Heading Context: A > B]`).
    - **Table Preservers**: Treats markdown and extracted tables as atomic units so headers are never separated from data rows.
@@ -55,6 +56,7 @@ To achieve production-grade resilience, precision, and safety, **benzyl-RAG** is
 ## 4. System Requirements
 
 - **Runtime Layer**: Python 3.10+ (Core CLI, Ingestion, Hybrid Retrieval & Defense).
+- **System Dependencies**: `poppler-utils` (`pdf2image` PDF rasterization) and `tesseract` (`/usr/bin/tesseract` OCR engine).
 - **Vector & Keyword Storage**: Embedded local Qdrant Vector DB (`qdrant-client`), Rank-BM25 TF-IDF index.
 - **Graph Engine**: NetworkX (Relationship & Reference Graph Indexing).
 - **Local LLM Engine**: Ollama daemon running `qwen2.5:7b` (or compatible local models).
@@ -97,9 +99,14 @@ To achieve production-grade resilience, precision, and safety, **benzyl-RAG** is
 
 During `python main.py index`, documents of **any file type** (`data/`) are ingested through a hardened multi-stage ingestion architecture avoiding redundant compute:
 
-1. **Direct Routing by File Type**:
-   - **PDF Documents (`.pdf` / `application/pdf`)**: Routed directly to **Docling** (`DocumentConverter`) for native, layout-aware parsing of reading order, complex tables, and section headings into hierarchical Markdown. The resulting Markdown is passed into **Unstructured (`partition_md`)** to preserve table structures and heading hierarchy as rich semantic elements.
-   - **Non-PDF Documents (`.docx`, `.xlsx`, `.html`, `.txt`, `.epub`, etc.)**: Routed to **Apache Tika (`tika-python`)** for universal MIME detection, metadata extraction, and raw text parsing, followed by **Unstructured (`partition`)** for semantic heading and table structuring.
+1. **Direct Routing by File Type & Multi-Tier PDF Fallbacks**:
+   - **PDF Documents (`.pdf` / `application/pdf`)**:
+     1. **Primary Structured Parsing**: Routed to **Docling** (`DocumentConverter`) for native, layout-aware parsing of reading order, complex tables, and section headings into hierarchical Markdown, passed into **Unstructured (`partition_md`)**.
+     2. **Image-Only PDF Rasterization & OCR Fallback (`_ocr_pdf_via_pdf2image`)**: If standard high-resolution extraction fails (e.g., image-only scanned PDFs without a text layer like ID cards), each page is rasterized to images via **`pdf2image`** (system `poppler-utils`) and directly OCR'd via **`pytesseract`** (`/usr/bin/tesseract`).
+     3. **Text-Layer Fallback (`pypdf`)**: Tried if rasterized OCR is not required or fails.
+     4. **Garbage-Text Safety Gate (`_is_garbage_text`)**: Blocks unreadable object-stream raw binary bytes from ever being accepted as fallback text across both PDF and non-PDF paths.
+     5. **Explicit Exception Logging**: Extraction failures log concrete exception types and trace messages via `logger.error` instead of silent warnings.
+   - **Non-PDF Documents (`.docx`, `.xlsx`, `.html`, `.txt`, `.epub`, etc.)**: Routed to **Apache Tika (`tika-python`)** for universal MIME detection, metadata extraction, and raw text parsing, followed by **Unstructured (`partition`)**, guarded by the same garbage-text gate.
 2. **Intelligent Chunking & Metadata Enrichment (`indexing/chunking.py`)**:
    - **True Heading Stack Tracker & Context Prefixing**: Tracks Markdown headers (`#` to `######`) as a stack (`Architecture > Databases > PGVector`), saving the lineage in `metadata["heading_breadcrumb"]` and prefixing `[Heading Context: ...]\n\n` to every chunk before embedding.
    - **Atomic & Massive Table Preservation**:
