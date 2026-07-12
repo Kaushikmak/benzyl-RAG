@@ -1,4 +1,13 @@
+<p align="center">
+  <img src="logo.png" alt="benzyl-RAG Logo" width="400"/>
+</p>
+
 # benzyl-RAG
+
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Local First](https://img.shields.io/badge/Local%20First-Ollama-00ADD8.svg)](https://ollama.com/)
+[![Vector DB](https://img.shields.io/badge/Vector%20DB-Qdrant-DC143C.svg)](https://qdrant.tech/)
+[![RAGShield Protected](https://img.shields.io/badge/Security-RAGShield%20Protected-brightgreen.svg)](#architecture-overview)
 
 A powerful, local-first Retrieval-Augmented Generation (RAG) assistant specifically designed to chat with and explore your document repositories.
 
