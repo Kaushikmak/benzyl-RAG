@@ -10,7 +10,7 @@ import app.config as config
 
 logger = logging.getLogger(__name__)
 
-AUTO_LINKS_PATH = "./data/auto_links.json"
+AUTO_LINKS_PATH = "./.data/auto_links.json"
 
 
 def _cosine(a, b):
@@ -24,7 +24,7 @@ def _cosine(a, b):
 
 def auto_link_external_documents(graph, chunks: List, embedding_model) -> list[dict]:
     note_chunks = [c for c in chunks if c.metadata.get("doc_type") == "note"]
-    external_chunks = [c for c in chunks if c.metadata.get("doc_type") == "external"]
+    external_chunks = [c for c in chunks if c.metadata.get("doc_type") in ("external", "file")]
 
     if not note_chunks or not external_chunks:
         return []
