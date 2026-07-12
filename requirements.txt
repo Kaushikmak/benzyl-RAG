@@ -1,7 +1,10 @@
 langchain
 langchain-community
+langchain-huggingface
 langchain-chroma
+langchain-qdrant
 langchain-text-splitters
+qdrant-client
 chromadb
 sentence-transformers
 rank-bm25
@@ -12,9 +15,12 @@ torch
 transformers
 pypdf
 unstructured
+tika
+docling
 python-docx
 python-pptx
 accelerate
 pydantic
 pytest
 psutil
+phe
