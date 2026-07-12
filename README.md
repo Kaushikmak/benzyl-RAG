@@ -4,7 +4,7 @@ A powerful, local-first Retrieval-Augmented Generation (RAG) assistant specifica
 
 This application is architected around a **6-Stage Production RAG Track** to deliver resilient, highly accurate answers from your documents:
 
-1. **Ingestion & Parsing**: Universal translator handling messy documents via **Apache Tika**, **Unstructured**, and **Docling** (ingesting any format cleanly from `data/`).
+1. **Ingestion & Parsing**: Universal translator handling messy documents via **Apache Tika**, **Unstructured**, **Docling**, and multi-tier **PDF OCR Fallback** (`pdf2image` + `pytesseract` for image-only/scanned PDFs lacking a text layer).
 2. **Intelligent Chunking & Metadata**: Sentence window / hierarchical splitting that preserves heading breadcrumbs, treats tables as atomic units, and precomputes summaries, keywords, and hypothetical questions.
 3. **Database Storage & Hybrid Retrieval**: Multi-step funnel combining **Metadata/Payload Filtering (Qdrant native filters)**, **Qdrant** dense vector search (`BAAI/bge-m3`), **BM25** exact keyword matching, and **Cross-Encoder Reranking** (`BAAI/bge-reranker-v2-m3`).
 4. **Orchestration & Routing**: Fast-pass **Query Router** (`app/router.py`) classifying requests to bypass heavy DB lookups for deterministic math, status, or conversational queries.
@@ -54,6 +54,7 @@ Every query runs through a deterministic 14-stage pipeline across 16 agents. Mos
 ### 1. Prerequisites
 
 - Python 3.10+
+- System packages: `tesseract` (`/usr/bin/tesseract`) and `poppler-utils` (required for image-only PDF page rasterization and OCR fallback via `pdf2image` and `pytesseract`)
 - [Ollama](https://ollama.com/) installed on your host machine.
 
 ### 2. Configuration
@@ -74,13 +75,13 @@ pip install -r requirements.txt
 
 ### 4. Indexing Your Documents
 
-Before you can chat, you must index your documents. This processes your files into vector embeddings, keyword chunks, and a document relationship graph.
+Before you can chat, you must index your documents. This processes your files into vector embeddings, keyword chunks, and a document relationship graph. Scanned or image-only PDFs (such as ID cards without a text layer) are automatically rasterized via `pdf2image` and OCR'd with `pytesseract`.
 
 ```bash
 python main.py index
 ```
 
-_Note: You need to re-run this command whenever you significantly update your documents._
+_Note: Re-running `python main.py index` rebuilds the Qdrant collections (`document_chunks` & `document_nodes`) cleanly (`force_recreate=True`), preventing stale or duplicate entries across reindexing runs._
 
 ### 5. Running the Application & Inspecting Guardrails Telemetry
 
