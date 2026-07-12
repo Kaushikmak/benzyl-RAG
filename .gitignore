@@ -1,27 +1,44 @@
+# Python Environment & Caches
 .venv/
+venv/
+env/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
 
+# Vector Databases & Local Index Data
+.data/
+data/
 vectorstore/
 node_vectorstore/
+chroma_db/
+qdrant_db/
+*.pkl
+*.sqlite3
 
-data/*.pkl
+.mission_state/
 
+# Local Data & Environment
 .env
-
-obsidianVault/
+.env.local
 
 # Logs
+*.log
 backend.log
-frontend.log
-ollama.log
+guardrails.log
 
-# Mac
+# macOS
 .DS_Store
 
-# IDE
+# IDEs & Editors
 .idea/
 .vscode/
+*.swp
+*.swo
 
-# SQLite
+# SQLite & Session DBs
 conversations.db
