@@ -17,6 +17,9 @@ pypdf
 unstructured
 tika
 docling
+pdf2image
+pytesseract
+pymupdf
 python-docx
 python-pptx
 accelerate
