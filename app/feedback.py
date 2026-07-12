@@ -97,36 +97,47 @@ def compute_feedback_priors(conn: sqlite3.Connection) -> Dict[str, float]:
     cur = conn.cursor()
     cur.execute(
         """
-        SELECT a.chunk_ids, f.thumb, COUNT(*)
+        SELECT a.chunk_ids, f.thumb, f.timestamp
         FROM feedback f
         JOIN answers a ON a.answer_id = f.answer_id
-        GROUP BY a.chunk_ids, f.thumb
         """
     )
 
+    now = datetime.now()
     scores: Dict[str, float] = {}
     counts: Dict[str, int] = {}
 
-    for chunk_ids_json, thumb, count in cur.fetchall():
+    for chunk_ids_json, thumb, ts_str in cur.fetchall():
         if not chunk_ids_json:
             continue
         chunk_ids = json.loads(chunk_ids_json)
-        delta = 1.0 if thumb == "up" else -1.0
+
+        # Time decay weighting
+        decay_weight = 1.0
+        try:
+            vote_time = datetime.fromisoformat(ts_str)
+            age_days = max(0.0, (now - vote_time).total_seconds() / 86400.0)
+            decay_weight = float(config.FEEDBACK_DECAY) ** age_days
+        except Exception:
+            decay_weight = 1.0
+
+        raw_direction = 1.0 if thumb == "up" else -1.0
+        # Cap step per vote
+        step = raw_direction * min(1.0, getattr(config, "FEEDBACK_MAX_STEP_PER_VOTE", 0.05)) * decay_weight
+
         for chunk_id in chunk_ids:
-            scores[chunk_id] = scores.get(chunk_id, 0.0) + (delta * count)
-            counts[chunk_id] = counts.get(chunk_id, 0) + count
+            scores[chunk_id] = scores.get(chunk_id, 0.0) + step
+            counts[chunk_id] = counts.get(chunk_id, 0) + 1
 
     priors: Dict[str, float] = {}
     for chunk_id, raw_score in scores.items():
         total = counts.get(chunk_id, 0)
         if total < config.FEEDBACK_MIN_VOTES:
             continue
-        if abs(raw_score) < 1.0:
+        if abs(raw_score) < 0.01:
             continue
 
-        normalized = raw_score / float(total)
-        decayed = normalized * config.FEEDBACK_DECAY
-        bounded = max(config.FEEDBACK_MAX_PENALTY, min(config.FEEDBACK_MAX_BOOST, decayed))
+        bounded = max(config.FEEDBACK_MAX_PENALTY, min(config.FEEDBACK_MAX_BOOST, raw_score))
         priors[chunk_id] = bounded
 
     return priors
