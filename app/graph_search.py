@@ -19,12 +19,12 @@ def expand_with_graph(graph,chunk_index,docs: List[ScoredDoc],max_neighbors: int
 
         filename = os.path.basename(source)
 
-        note_name = filename.replace(".md", "")
+        node_name = os.path.splitext(filename)[0]
 
-        if note_name in graph:
+        if node_name in graph:
 
             neighbors = list(
-                graph.neighbors(note_name)
+                graph.neighbors(node_name)
             )[:max_neighbors]
 
             for neighbor in neighbors:
