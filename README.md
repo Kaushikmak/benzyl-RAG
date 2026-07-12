@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" alt="benzyl-RAG Logo" width="400"/>
+  <img src="logo.png" alt="benzyl-RAG Logo" height="100"/>
 </p>
 
 # benzyl-RAG
@@ -7,7 +7,6 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![Local First](https://img.shields.io/badge/Local%20First-Ollama-00ADD8.svg)](https://ollama.com/)
 [![Vector DB](https://img.shields.io/badge/Vector%20DB-Qdrant-DC143C.svg)](https://qdrant.tech/)
-[![RAGShield Protected](https://img.shields.io/badge/Security-RAGShield%20Protected-brightgreen.svg)](#architecture-overview)
 
 A powerful, local-first Retrieval-Augmented Generation (RAG) assistant specifically designed to chat with and explore your document repositories.
 
@@ -45,14 +44,14 @@ benzyl-RAG/
 
 Every query runs through a deterministic 14-stage pipeline across 16 agents. Most run automatically in the background (security scanning, retrieval, reranking, citation, reflection, verification, formatting). A few respond to direct user intent:
 
-| Agent          | Role                                                                                        | Example                                                     |
-| -------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| **Planner**    | Decomposes multi-part queries into a prioritized retrieval plan                             | `"Compare GFS and HDFS chunk replication"`                  |
+| Agent          | Role                                                                                           | Example                                                     |
+| -------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| **Planner**    | Decomposes multi-part queries into a prioritized retrieval plan                                | `"Compare GFS and HDFS chunk replication"`                  |
 | **Researcher** | Runs the 4-stage retrieval funnel (metadata filter -> hybrid RRF -> graph expansion -> rerank) | `"What are the assumptions of the GFS paper?"`              |
-| **Synthesis**  | Calls local `qwen2.5:7b` to generate the answer from retrieved context                      | `"Explain all layers of blockchain with examples"`          |
-| **File**       | Handles SAVE/APPEND/DELETE with atomic writes and HITL approval                             | `"Summarise the GFS conclusion and save to gfs_summary.md"` |
-| **Math**       | Sandboxed AST evaluator for arithmetic — no LLM call                                        | `"145 * 23 + sqrt(144)"`                                    |
-| **Status**     | Answers system introspection from cached telemetry                                          | `"How many documents are indexed?"`                         |
+| **Synthesis**  | Calls local `qwen2.5:7b` to generate the answer from retrieved context                         | `"Explain all layers of blockchain with examples"`          |
+| **File**       | Handles SAVE/APPEND/DELETE with atomic writes and HITL approval                                | `"Summarise the GFS conclusion and save to gfs_summary.md"` |
+| **Math**       | Sandboxed AST evaluator for arithmetic — no LLM call                                           | `"145 * 23 + sqrt(144)"`                                    |
+| **Status**     | Answers system introspection from cached telemetry                                             | `"How many documents are indexed?"`                         |
 
 > **HITL Safety Gate**: Any SAVE or DELETE creates a `HITLApprovalRequest` (`PENDING`) in `.mission_state/<id>.json`. Nothing is written until explicitly approved.
 
