@@ -1,29 +1,38 @@
-VAULT_PATH = "/mnt/storage/Documents/Obsidian Vault/"
+DATA_DIR = "./data"
+STORAGE_DIR = "./.data"
 
-VECTORSTORE_DIR = "./vectorstore"
-NODE_VECTORSTORE_DIR = "./node_vectorstore"
+QDRANT_DIR = "./.data/qdrant_db"
+QDRANT_CHUNK_COLLECTION = "document_chunks"
+QDRANT_NODE_COLLECTION = "document_nodes"
 
-BM25_PATH = "./data/bm25.pkl"
-GRAPH_PATH = "./data/graph.pkl"
+VECTORSTORE_DIR = "./.data/qdrant_db"
+NODE_VECTORSTORE_DIR = "./.data/qdrant_db"
+
+BM25_PATH = "./.data/bm25.pkl"
+GRAPH_PATH = "./.data/graph.pkl"
 
 EMBED_MODEL = "BAAI/bge-m3"
 RERANK_MODEL = "BAAI/bge-reranker-v2-m3"
 
 OLLAMA_MODEL = "qwen3:8b"
 
-DEVICE = "cuda"
+OLLAMA_NUM_CTX = 8192
+OLLAMA_TIMEOUT = 180.0
 
-CHUNK_SIZE = 600
-CHUNK_OVERLAP = 100
+DEVICE = "cuda"
+EMBED_BATCH_SIZE = 4
+
+CHUNK_SIZE = 1200
+CHUNK_OVERLAP = 200
 
 # Retrieval knobs
-VECTOR_K = 10
-BM25_K = 10
-MERGE_TOP_N = 12
-GRAPH_TOP_MERGED = 4
+VECTOR_K = 50
+BM25_K = 50
+MERGE_TOP_N = 40
+GRAPH_TOP_MERGED = 3
 GRAPH_MAX_NEIGHBORS = 2
 GRAPH_MAX_CHUNKS_PER_NEIGHBOR = 2
-RERANK_TOP_K = 4
+RERANK_TOP_K = 8
 
 # Weighted fusion
 W_VECTOR = 1.0
@@ -43,6 +52,7 @@ FEEDBACK_DECAY = 0.95
 FEEDBACK_MIN_VOTES = 2
 FEEDBACK_MAX_BOOST = 0.25
 FEEDBACK_MAX_PENALTY = -0.25
+FEEDBACK_MAX_STEP_PER_VOTE = 0.05
 FEEDBACK_REFRESH_SECONDS = 60
 
 
@@ -51,7 +61,42 @@ FEEDBACK_REFRESH_SECONDS = 60
 MAX_SOURCE_PREVIEW_CHARS = 30000
 
 # External documents
-EXTERNAL_DOCS_PATH = "./data/external_docs"
-EXTERNAL_DOC_EXTENSIONS = [".pdf", ".docx", ".pptx"]
+EXTERNAL_DOCS_PATH = DATA_DIR
+EXTERNAL_DOC_EXTENSIONS = [
+    ".pdf", ".docx", ".pptx", ".xlsx", ".html", ".txt", ".csv",
+    ".rtf", ".epub", ".odt", ".md", ".json", ".xml"
+]
 AUTO_LINK_TOP_K = 3
 AUTO_LINK_THRESHOLD = 0.45
+
+# Ingestion Pipeline Configuration
+INGESTION_USE_TIKA = True
+INGESTION_USE_DOCLING_FOR_PDF = True
+INGESTION_USE_UNSTRUCTURED = True
+INGESTION_UNIVERSAL_LOAD = True
+
+# Intelligent Chunking & Metadata Extraction Configuration
+ENABLE_INTELLIGENT_CHUNKING = True
+PRESERVE_ATOMIC_TABLES = True
+TABLE_MAX_CHARS = 4000
+ENABLE_METADATA_EXTRACTION = True
+USE_LLM_FOR_METADATA = False
+
+# Orchestration & Query Router Configuration
+ENABLE_QUERY_ROUTING = True
+ROUTER_FAST_CLASSIFY = True
+
+# Multi-Agent Execution & Safety Configuration
+ENABLE_MULTI_AGENT_ORCHESTRATION = True
+REQUIRE_HITL_FOR_MUTATIONS = True
+MISSION_STATE_DIR = ".mission_state"
+
+# Continuous Evaluation & Monitoring Configuration
+ENABLE_CONTINUOUS_EVAL = True
+EVAL_HISTORY_PATH = "./.data/rag_eval_history.json"
+PRODUCTION_PRICING_USD_PER_M_TOKENS = {
+    "gpt-4o": {"input": 2.50, "output": 10.00},
+    "claude-3-5-sonnet": {"input": 3.00, "output": 15.00},
+    "llama-3.3-70b-cloud": {"input": 0.60, "output": 0.60},
+    "local-compute": {"input": 0.0, "output": 0.0},
+}
