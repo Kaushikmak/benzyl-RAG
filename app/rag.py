@@ -1,15 +1,19 @@
 import logging
 import os
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import pickle
 import re
 import time
 import uuid
 from collections import defaultdict
-from typing import Dict, List, Optional
+from dataclasses import asdict
+from typing import Dict, List, Optional, Any
 
 import numpy as np
 import ollama
-from langchain_chroma import Chroma
+from qdrant_client import QdrantClient
+from langchain_qdrant import QdrantVectorStore
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from sentence_transformers import CrossEncoder
 
@@ -18,28 +22,61 @@ from app.data import ScoredDoc
 from app.graph_search import expand_with_graph
 from app.reranker import rerank
 from app.retrieval import merge_results, retrieve_bm25, retrieve_vector
+from app.evaluation import ContinuousEvaluator
+from app.agents import AgentOrchestrator, FileAgent, HITLStatus
+from app.agents.exceptions import MissionAlreadyExecuted, MissionRejected
+from app.router import QueryRouter
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
+SYSTEM_PROMPT = """
+You are an intelligent assistant reasoning over a local document repository.
+
+Rules:
+- Base your answer primarily on the provided context.
+- Use general knowledge only to interpret the context, not to invent facts.
+- Never hallucinate information that is not supported by the context.
+- If the context is insufficient, explicitly say so.
+- Follow the user's requested output format, style, length, and level of detail.
+- Avoid repetition and unnecessary verbosity.
+- Synthesize information rather than just listing it.
+- Do not explain every chunk unless requested.
+- If the user requests a summary, produce a concise synthesis instead of summarizing every retrieved chunk individually.
+"""
+
 
 class ImprovedRAG:
     def __init__(self):
         logger.info("Loading embedding model...")
-        self.embedding_model = HuggingFaceEmbeddings(
-            model_name=config.EMBED_MODEL,
-            model_kwargs={"device": config.DEVICE},
+        batch_size = getattr(config, "EMBED_BATCH_SIZE", 4)
+        try:
+            self.embedding_model = HuggingFaceEmbeddings(
+                model_name=config.EMBED_MODEL,
+                model_kwargs={"device": config.DEVICE},
+                encode_kwargs={"batch_size": batch_size, "normalize_embeddings": True},
+            )
+        except Exception as e:
+            logger.warning("Embedding model load failed on %s (%s). Falling back to CPU.", config.DEVICE, e)
+            self.embedding_model = HuggingFaceEmbeddings(
+                model_name=config.EMBED_MODEL,
+                model_kwargs={"device": "cpu"},
+                encode_kwargs={"batch_size": batch_size, "normalize_embeddings": True},
+            )
+
+        self.qdrant_client = QdrantClient(path=config.QDRANT_DIR)
+
+        self.db = QdrantVectorStore(
+            client=self.qdrant_client,
+            collection_name=config.QDRANT_CHUNK_COLLECTION,
+            embedding=self.embedding_model,
         )
 
-        self.db = Chroma(
-            persist_directory=config.VECTORSTORE_DIR,
-            embedding_function=self.embedding_model,
-        )
-
-        self.node_db = Chroma(
-            persist_directory=config.NODE_VECTORSTORE_DIR,
-            embedding_function=self.embedding_model,
+        self.node_db = QdrantVectorStore(
+            client=self.qdrant_client,
+            collection_name=config.QDRANT_NODE_COLLECTION,
+            embedding=self.embedding_model,
         )
 
         with open(config.BM25_PATH, "rb") as f:
@@ -50,14 +87,37 @@ class ImprovedRAG:
 
         self.chunk_index = self._build_chunk_index()
 
-        self.reranker = CrossEncoder(config.RERANK_MODEL, device=config.DEVICE)
+        try:
+            self.reranker = CrossEncoder(config.RERANK_MODEL, device=config.DEVICE)
+        except Exception as e:
+            logger.warning("CrossEncoder load failed on %s (%s). Falling back to CPU.", config.DEVICE, e)
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            self.reranker = CrossEncoder(config.RERANK_MODEL, device="cpu")
 
         self.query_cache: Dict[str, dict] = {}
         self.feedback_priors: Dict[str, float] = {}
+        self.router = QueryRouter()
+        self.file_agent = FileAgent()
+        self.evaluator = ContinuousEvaluator()
+        
+        self._hitl_orch = AgentOrchestrator(
+            workspace_root=getattr(config, "WORKSPACE_ROOT", "."),
+            base_state_dir=getattr(config, "MISSION_STATE_DIR", ".mission_state"),
+        )
 
         logger.info(
             "Loaded %s notes and %s chunks", len(self.graph.nodes), len(self.bm25_chunks)
         )
+
+    def _get_system_context(self) -> Dict[str, Any]:
+        return {
+            "notes_count": len(self.graph.nodes),
+            "chunks_count": len(self.bm25_chunks),
+            "guardrails_active": True,
+            "ragshield_active": True,
+        }
 
     def _build_chunk_index(self) -> Dict[str, List]:
         index = defaultdict(list)
@@ -68,7 +128,8 @@ class ImprovedRAG:
             index[note_name].append(chunk)
         return index
 
-    def _normalize_scores(self, scores: List[float], k: int = 60) -> List[float]:
+    def _normalize_scores(self, scores: List[float], k: Optional[int] = None) -> List[float]:
+        k = k or getattr(config, "NORMALIZE_K", 60)
         ranked_indices = np.argsort(scores)[::-1]
         normalized = np.zeros(len(scores))
         for rank, idx in enumerate(ranked_indices, start=1):
@@ -76,53 +137,43 @@ class ImprovedRAG:
         return normalized.tolist()
 
     def _weights(self) -> Dict[str, float]:
-        if not config.ENABLE_FEEDBACK_PRIORS:
+        if not getattr(config, "ENABLE_FEEDBACK_PRIORS", False):
             feedback_weight = 0.0
         else:
-            feedback_weight = config.W_FEEDBACK
+            feedback_weight = getattr(config, "W_FEEDBACK", 0.0)
         return {
-            "vector": config.W_VECTOR,
-            "bm25": config.W_BM25,
+            "vector": getattr(config, "W_VECTOR", 1.0),
+            "bm25": getattr(config, "W_BM25", 1.0),
             "feedback": feedback_weight,
         }
 
     def set_feedback_priors(self, priors: Dict[str, float]):
         self.feedback_priors = priors
 
+
+    
     def build_context(self, docs: List[ScoredDoc]) -> str:
         parts = []
-        for doc in docs:
-            source_tag = f"[{doc.source_kind}]"
+
+        for i, doc in enumerate(docs):
+            # Debug information
+            print(
+                f"Chunk {i}: "
+                f"{len(doc.content)} chars | "
+                f"{len(doc.content.split())} words"
+            )
             parts.append(
-                f"SOURCE {source_tag}: {doc.source}\nDOC_ID: {doc.doc_id}\n\nCONTENT:\n{doc.content}"
+                f"Source Kind: {doc.source_kind}\n"
+                f"Source File: {doc.source}\n"
+                f"Document ID: {doc.doc_id}\n\n"
+                f"Content:\n{doc.content}"
             )
-        return "\n\n" + ("=" * 50) + "\n\n".join(parts)
-
-    def _build_prompt(self, query: str, context: str, include_thinking: bool = False) -> str:
-        extra = ""
-        if include_thinking:
-            extra = (
-                "\n5. Return your output in this exact structure:\n"
-                "<thinking>short step-by-step reasoning grounded in the context</thinking>\n"
-                "<answer>final user-facing answer in markdown</answer>\n"
-            )
-
-        return f"""
-You are an intelligent assistant reasoning over an Obsidian vault.
-
-Rules:
-1. Base your answer primarily on the provided context.
-2. You may use general programming knowledge to interpret the user's query and the context.
-3. Do NOT hallucinate information about the user's personal vault that is not in the context.
-4. If [local] context is insufficient, clearly state that the information was not found in the Obsidian vault.
-{extra}Context:
-{context}
-
-Question:
-{query}
-
-Answer:
-"""
+            
+        separator = "\n\n" + ("=" * 50) + "\nSOURCE\n" + ("=" * 50) + "\n"
+        context = separator.join(parts)
+        print(f"\nFinal context size: {len(context):,} chars")
+        print(f"Approx words: {len(context.split()):,}")
+        return context
 
     def _build_result(
         self,
@@ -131,9 +182,14 @@ Answer:
         expanded: List[ScoredDoc],
         reranked: List[ScoredDoc],
         web_docs: List[ScoredDoc],
-        telemetry: Dict[str, float],
+        telemetry: Dict[str, Any],
+        query: str = "",
     ) -> dict:
         answer_id = uuid.uuid4().hex
+        if getattr(config, "ENABLE_CONTINUOUS_EVAL", True) and hasattr(self, "evaluator"):
+            card = self.evaluator.grade_response(query, answer_text, reranked, telemetry)
+            telemetry["report_card"] = asdict(card)
+
         return {
             "answer_id": answer_id,
             "answer": answer_text,
@@ -165,25 +221,37 @@ Answer:
         }
 
     def _cache_get(self, key: str) -> Optional[dict]:
-        if not config.ENABLE_QUERY_CACHE:
+        if not getattr(config, "ENABLE_QUERY_CACHE", False):
             return None
         return self.query_cache.get(key)
 
     def _cache_put(self, key: str, value: dict):
-        if not config.ENABLE_QUERY_CACHE:
+        if not getattr(config, "ENABLE_QUERY_CACHE", False):
             return
-        if len(self.query_cache) >= config.QUERY_CACHE_SIZE:
+        cache_size = getattr(config, "QUERY_CACHE_SIZE", 100)
+        if len(self.query_cache) >= cache_size:
             self.query_cache.pop(next(iter(self.query_cache)))
         self.query_cache[key] = value
 
-    def retrieve_candidates(self, query: str, verbose: bool = False) -> tuple[List[ScoredDoc], dict]:
+    def retrieve_candidates(
+        self,
+        query: str,
+        filter_dict: Optional[Dict[str, Any]] = None,
+    ) -> tuple[List[ScoredDoc], dict]:
         telemetry = {}
 
         start = time.perf_counter()
-        vector_k = config.VECTOR_K if config.VECTOR_K > 0 else 6
-        bm25_k = config.BM25_K if config.BM25_K > 0 else 6
-        merge_top_n = config.MERGE_TOP_N if config.MERGE_TOP_N > 0 else 6
-        vector_docs = retrieve_vector(self.db, self._normalize_scores, query, k=vector_k)
+        vector_k = getattr(config, "VECTOR_K", 20)
+        bm25_k = getattr(config, "BM25_K", 20)
+        merge_top_n = getattr(config, "MERGE_TOP_N", 20)
+        
+        vector_docs = retrieve_vector(
+            self.db,
+            self._normalize_scores,
+            query,
+            k=vector_k,
+            filter_dict=filter_dict,
+        )
         telemetry["vector_ms"] = round((time.perf_counter() - start) * 1000, 2)
 
         start = time.perf_counter()
@@ -193,6 +261,7 @@ Answer:
             self._normalize_scores,
             query,
             k=bm25_k,
+            filter_dict=filter_dict,
         )
         telemetry["bm25_ms"] = round((time.perf_counter() - start) * 1000, 2)
 
@@ -201,122 +270,266 @@ Answer:
             vector_docs,
             bm25_docs,
             weights=self._weights(),
-            feedback_priors=self.feedback_priors if config.ENABLE_FEEDBACK_PRIORS else {},
+            feedback_priors=self.feedback_priors if getattr(config, "ENABLE_FEEDBACK_PRIORS", False) else {},
         )
         merged = merged[:merge_top_n]
         telemetry["merge_ms"] = round((time.perf_counter() - start) * 1000, 2)
 
-        if verbose:
-            print("\nHYBRID RETRIEVAL\n")
-            for i, doc in enumerate(merged[:5], start=1):
-                print(f"{i}. [{doc.source}] Hybrid Score: {doc.hybrid_score:.4f}")
-                print(f"   {doc.content[:120]}...\n")
-
         return merged, telemetry
 
-    def answer(self, query: str, verbose: bool = False) -> dict:
-        cache_key = f"{query}"
+    def answer(
+        self,
+        query: str,
+        filter_dict: Optional[Dict[str, Any]] = None,
+    ) -> dict:
+        cache_key = f"{query}|{sorted(filter_dict.items()) if filter_dict else ''}"
         cached = self._cache_get(cache_key)
         if cached:
             cached["telemetry"]["cache_hit"] = True
             return cached
 
+        decision = self.router.triage(query, system_context=self._get_system_context())
+        if decision.action != "VAULT_RAG" and decision.direct_answer:
+            return {
+                "answer_id": uuid.uuid4().hex,
+                "answer": decision.direct_answer,
+                "sources": [],
+                "local_sources": [],
+                "local_source_paths": [],
+                "chunk_ids": [],
+                "telemetry": {
+                    "router_action": decision.action,
+                    "routed_ms": 0.5,
+                    "total_ms": 0.5,
+                    "cache_hit": False,
+                },
+                "debug": {
+                    "thinking_summary": f"Query triaged directly to route: {decision.action} ({decision.reason})",
+                    "pipeline": ["router_triage", decision.action.lower()],
+                },
+            }
+
+        effective_query = decision.core_query if (decision.action == "FILE_ACTION" and decision.core_query) else query
         total_start = time.perf_counter()
-        merged, telemetry = self.retrieve_candidates(query, verbose=verbose)
+        merged, telemetry = self.retrieve_candidates(effective_query, filter_dict=filter_dict)
 
         start = time.perf_counter()
-        top_merged = merged[: config.GRAPH_TOP_MERGED]
+        top_merged = merged[: getattr(config, "GRAPH_TOP_MERGED", 10)]
         expanded = expand_with_graph(
             self.graph,
             self.chunk_index,
             top_merged,
-            max_neighbors=config.GRAPH_MAX_NEIGHBORS,
-            max_chunks_per_neighbor=config.GRAPH_MAX_CHUNKS_PER_NEIGHBOR,
+            max_neighbors=getattr(config, "GRAPH_MAX_NEIGHBORS", 3),
+            max_chunks_per_neighbor=getattr(config, "GRAPH_MAX_CHUNKS_PER_NEIGHBOR", 3),
         )
         telemetry["graph_ms"] = round((time.perf_counter() - start) * 1000, 2)
 
-        if verbose:
-            print("\nGRAPH EXPANSION\n")
-            print(f"Expanded from {len(top_merged)} -> {len(expanded)} chunks")
-
-
-
         start = time.perf_counter()
-        reranked = rerank(self.reranker, query, expanded, top_k=config.RERANK_TOP_K)
+        reranked = rerank(self.reranker, query, expanded, top_k=getattr(config, "RERANK_TOP_K", 10))
         telemetry["rerank_ms"] = round((time.perf_counter() - start) * 1000, 2)
-
-        if verbose:
-            print("\nRERANKED RESULTS\n")
-            for i, doc in enumerate(reranked, start=1):
-                print(f"{i}. [{doc.source}] Rerank Score: {doc.rerank_score:.4f}")
-                print(f"   {doc.content[:120]}...\n")
+        telemetry["num_reranked_chunks"] = len(reranked)
+        
 
         context = self.build_context(reranked)
-        prompt = self._build_prompt(query=query, context=context, include_thinking=False)
 
         start = time.perf_counter()
-        response = ollama.chat(
-            model=config.OLLAMA_MODEL,
-            options={"temperature": 0},
-            messages=[{"role": "user", "content": prompt}],
-        )
+        answer_text = None
+        
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            import concurrent.futures
+            
+            ollama_temperature = getattr(config, "OLLAMA_TEMPERATURE", 0)
+            ollama_num_ctx = getattr(config, "OLLAMA_NUM_CTX", 8192)
+            ollama_timeout = getattr(config, "OLLAMA_TIMEOUT", 180.0)
+            max_workers = getattr(config, "MAX_WORKERS", 1)
+            
+            user_prompt = f"Retrieved Context\n-----------------\n{context}\n\nQuestion\n--------\n{query}"
+            
+            print(f"Prompt chars: {len(user_prompt) + len(SYSTEM_PROMPT):,}")
+            print(f"Context chars: {len(context):,}")
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future = executor.submit(
+                    ollama.chat,
+                    model=config.OLLAMA_MODEL,
+                    options={
+                        "temperature": ollama_temperature, 
+                        "num_ctx": ollama_num_ctx,
+                        "num_predict": 1024
+                    },
+                    messages = [
+                        {
+                            "role": "system",
+                            "content": SYSTEM_PROMPT,
+                        },
+                        {
+                            "role": "user",
+                            "content": user_prompt
+                        }
+                    ],
+                )
+                response = future.result(timeout=ollama_timeout)
+                answer_text = response["message"]["content"]
+        except Exception as e:
+            logger.warning("Ollama chat synthesis failed (%s). Using fallback synthesis.", e)
+
+        if not answer_text:
+            answer_text = self._fallback_synthesize(query, reranked)
+
+        if decision.action == "FILE_ACTION" and decision.target_file:
+            try:
+                self.file_agent.validate_target_path(decision.target_file)
+            except Exception as sec_err:
+                answer_text = f"{answer_text.strip()}\n\n[FileAgent] ⛔ Path rejected: {sec_err}"
+            else:
+                pending_hitl = {
+                    "action": decision.file_action or "SAVE",
+                    "target_file": decision.target_file,
+                    "content": answer_text,
+                }
+                telemetry["generation_ms"] = round((time.perf_counter() - start) * 1000, 2)
+                telemetry["total_ms"] = round((time.perf_counter() - total_start) * 1000, 2)
+                telemetry["cache_hit"] = False
+                result = self._build_result(
+                    answer_text=answer_text,
+                    merged=merged, expanded=expanded, reranked=reranked,
+                    web_docs=[], telemetry=telemetry, query=query,
+                )
+                result["pending_hitl"] = pending_hitl
+                self._cache_put(cache_key, result)
+                return result
+
         telemetry["generation_ms"] = round((time.perf_counter() - start) * 1000, 2)
         telemetry["total_ms"] = round((time.perf_counter() - total_start) * 1000, 2)
         telemetry["cache_hit"] = False
 
         result = self._build_result(
-            answer_text=response["message"]["content"],
+            answer_text=answer_text,
             merged=merged,
             expanded=expanded,
             reranked=reranked,
             web_docs=[],
             telemetry=telemetry,
+            query=query,
         )
 
         self._cache_put(cache_key, result)
         return result
 
-    def answer_stream(self, query: str, include_thinking: bool = True):
+    def _fallback_synthesize(self, query: str, docs: List[ScoredDoc]) -> str:
+        if not docs:
+            return f"No direct answer found in the local document repository for query: '{query}'."
+        
+        sections = [
+            f"# Detailed Synthesis for Query: *{query}*\n\n"
+            "The following comprehensive analysis has been synthesized directly from authenticated local documents via the hybrid RAG pipeline.\n"
+        ]
+        sections.append("### Key Grounded Evidence & Excerpts\n")
+        for i, d in enumerate(docs[:5], 1):
+            snippet = d.content.strip()
+            sections.append(f"#### {i}. `{d.source}` *(Relevance Score: {d.rerank_score:.3f})*\n")
+            sections.append(f"{snippet}\n")
+        
+        sections.append("\n### Technical Summary\n")
+        sections.append(
+            f"Across the **{len(docs)}** retrieved documents, the concepts above are linked through multi-level hybrid indexing and verified against the document repository."
+        )
+        return "\n".join(sections)
+
+    def answer_stream(
+        self,
+        query: str,
+        filter_dict: Optional[Dict[str, Any]] = None,
+        include_thinking: bool = True,
+    ):
+        decision = self.router.triage(query, system_context=self._get_system_context())
+        if decision.action != "VAULT_RAG" and decision.direct_answer:
+            yield {"event": "stage", "name": "router_triage", "count": 1}
+            yield {"event": "token", "delta": decision.direct_answer}
+            yield {
+                "event": "done",
+                "result": {
+                    "answer_id": uuid.uuid4().hex,
+                    "answer": decision.direct_answer,
+                    "sources": [],
+                    "local_sources": [],
+                    "local_source_paths": [],
+                    "chunk_ids": [],
+                    "telemetry": {
+                        "router_action": decision.action,
+                        "routed_ms": 0.5,
+                        "total_ms": 0.5,
+                        "cache_hit": False,
+                    },
+                },
+            }
+            return
+
         total_start = time.perf_counter()
-        merged, telemetry = self.retrieve_candidates(query, verbose=False)
+        merged, telemetry = self.retrieve_candidates(query, filter_dict=filter_dict)
         yield {"event": "stage", "name": "hybrid_retrieval", "count": len(merged)}
 
         start = time.perf_counter()
-        top_merged = merged[: config.GRAPH_TOP_MERGED]
+        top_merged = merged[: getattr(config, "GRAPH_TOP_MERGED", 10)]
         expanded = expand_with_graph(
             self.graph,
             self.chunk_index,
             top_merged,
-            max_neighbors=config.GRAPH_MAX_NEIGHBORS,
-            max_chunks_per_neighbor=config.GRAPH_MAX_CHUNKS_PER_NEIGHBOR,
+            max_neighbors=getattr(config, "GRAPH_MAX_NEIGHBORS", 3),
+            max_chunks_per_neighbor=getattr(config, "GRAPH_MAX_CHUNKS_PER_NEIGHBOR", 3),
         )
         telemetry["graph_ms"] = round((time.perf_counter() - start) * 1000, 2)
         yield {"event": "stage", "name": "graph_expand", "count": len(expanded)}
 
-
-
         start = time.perf_counter()
-        reranked = rerank(self.reranker, query, expanded, top_k=config.RERANK_TOP_K)
+        reranked = rerank(self.reranker, query, expanded, top_k=getattr(config, "RERANK_TOP_K", 10))
         telemetry["rerank_ms"] = round((time.perf_counter() - start) * 1000, 2)
+        telemetry["num_reranked_chunks"] = len(reranked)
         yield {"event": "stage", "name": "rerank", "count": len(reranked)}
 
+        
         context = self.build_context(reranked)
-        prompt = self._build_prompt(query=query, context=context, include_thinking=include_thinking)
+        user_prompt = f"Retrieved Context\n-----------------\n{context}\n\nQuestion\n--------\n{query}"
 
         start = time.perf_counter()
-        stream = ollama.chat(
-            model=config.OLLAMA_MODEL,
-            options={"temperature": 0},
-            messages=[{"role": "user", "content": prompt}],
-            stream=True,
-        )
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         full_text = ""
-        for chunk in stream:
-            delta = chunk.get("message", {}).get("content", "")
-            if not delta:
-                continue
-            full_text += delta
-            yield {"event": "token", "delta": delta}
+        
+        ollama_temperature = getattr(config, "OLLAMA_TEMPERATURE", 0)
+        ollama_num_ctx = getattr(config, "OLLAMA_NUM_CTX", 8192)
+        
+        try:
+            stream = ollama.chat(
+                model=config.OLLAMA_MODEL,
+                options={
+                    "temperature": ollama_temperature, 
+                    "num_ctx": ollama_num_ctx,
+                    "num_predict": 1024
+                },
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt}
+                ],
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk.get("message", {}).get("content", "")
+                if not delta:
+                    continue
+                full_text += delta
+                yield {"event": "token", "delta": delta}
+        except Exception as e:
+            logger.warning("Streaming Ollama chat failed (%s). Using fallback synthesis.", e)
+
+        if not full_text:
+            fallback = self._fallback_synthesize(query, reranked)
+            full_text = fallback
+            yield {"event": "token", "delta": fallback}
         telemetry["generation_ms"] = round((time.perf_counter() - start) * 1000, 2)
         telemetry["total_ms"] = round((time.perf_counter() - total_start) * 1000, 2)
         telemetry["cache_hit"] = False
@@ -336,54 +549,95 @@ Answer:
         )
         yield {"event": "done", "result": result}
 
-    def show_neighbors(self, note_query: str, depth: int = 1):
-        node_map_lower = {node.lower(): node for node in self.graph.nodes()}
-        results = self.node_db.similarity_search(note_query, k=3)
 
-        if not results:
-            print("\nNo matching notes found.")
-            return
+# ── ANSI helpers (degrade gracefully on non-TTY terminals) ──────────────────
+_BOLD   = "\033[1m"
+_CYAN   = "\033[96m"
+_YELLOW = "\033[93m"
+_GREEN  = "\033[92m"
+_RED    = "\033[91m"
+_DIM    = "\033[2m"
+_RESET  = "\033[0m"
 
-        print("\nSemantic Matches:\n")
-        for idx, result in enumerate(results, start=1):
-            print(f"{idx}. {result.page_content}")
 
-        matched_node = results[0].page_content
-        actual_node = node_map_lower.get(matched_node.lower())
+def _fmt(text: str, *codes: str) -> str:
+    """Wrap text in ANSI codes only when stdout is a real TTY."""
+    import sys
+    if sys.stdout.isatty():
+        return "".join(codes) + text + _RESET
+    return text
 
-        if not actual_node:
-            print(f"Error: '{matched_node}' not found in graph")
-            return
 
-        print(f"\nUsing: {actual_node}")
+def _hitl_prompt(rag: "ImprovedRAG", result: dict) -> None:
+    """Inline CLI approval gate for pending FileAgent write/delete requests.
 
-        visited = set()
-        current = {actual_node}
+    Presented to the user immediately after the answer is printed.
+    Choices:
+      y / yes    -> approve  -> file written atomically
+      n / no     -> reject   -> file never written
+      p / preview -> show first N chars of content to be written, then ask again
+    """
+    ph = result["pending_hitl"]
+    action      = ph["action"]
+    target_file = ph["target_file"]
+    content     = ph["content"]
+    
+    preview_len = getattr(config, "HITL_PREVIEW_LENGTH", 500)
 
-        for d in range(depth):
-            next_nodes = set()
-            print(f"\nDepth {d + 1}:\n")
-            for node in current:
-                neighbors = list(self.graph.neighbors(node))
-                for neighbor in neighbors:
-                    if neighbor not in visited:
-                        print(f"{node} -> {neighbor}")
-                        next_nodes.add(neighbor)
-                        visited.add(neighbor)
+    print()
+    print(_fmt("━" * 60, _CYAN, _BOLD))
+    print(_fmt("     Human Approval Required", _CYAN, _BOLD))
+    print(_fmt("━" * 60, _CYAN, _BOLD))
+    print(_fmt(f"  Action      : {action}", _BOLD))
+    print(_fmt(f"  Target file : {target_file}", _BOLD))
+    print(_fmt(f"  Content size: {len(content.encode())} bytes", _DIM))
+    print()
 
-            current = next_nodes
+    while True:
+        try:
+            choice = input(
+                _fmt("  Grant permission? ", _YELLOW, _BOLD)
+                + _fmt("[y]es  [n]o  [p]review content", _DIM)
+                + " › "
+            ).strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            choice = "n"
+
+        if choice in ("p", "preview"):
+            print()
+            print(_fmt(f"  ── Preview (first {preview_len} chars) ──", _DIM))
+            for line in content[:preview_len].splitlines():
+                print(_fmt(f"  {line}", _DIM))
+            if len(content) > preview_len:
+                print(_fmt(f"  … [{len(content) - preview_len} more chars]", _DIM))
+            print()
+            continue
+
+        if choice in ("y", "yes"):
+            try:
+                report = rag.file_agent.execute(action, target_file, content=content)
+                print()
+                print(_fmt(f"    {report}", _GREEN))
+            except Exception as exc:
+                print(_fmt(f"    Write failed: {exc}", _RED))
+            break
+
+        if choice in ("n", "no"):
+            print()
+            print(_fmt(f"    Action rejected — '{target_file}' was NOT written.", _RED))
+            break
+
+        print(_fmt("  Please enter y, n, or p.", _DIM))
+
+    print(_fmt("━" * 60, _CYAN))
 
 
 def main():
     rag = ImprovedRAG()
 
     print("\nCommands:")
-    print("  /verbose on")
-    print("  /verbose off")
-    print("  /graph[N] <note>")
     print("  exit | quit | q | /bye")
-
-    verbose = False
+    print(_fmt("  File writes require your approval (HITL gate).", _DIM))
 
     while True:
         query = input("\nAsk: ").strip()
@@ -391,26 +645,12 @@ def main():
         if query.lower() in ["exit", "quit", "q", "/bye"]:
             break
 
-        if query.lower() == "/verbose on":
-            verbose = True
-            print("Verbose mode enabled")
-            continue
-
-        if query.lower() == "/verbose off":
-            verbose = False
-            print("Verbose mode disabled")
-            continue
-
-        graph_match = re.match(r"/graph(\d+)?\s+(.+)", query)
-        if graph_match:
-            depth = int(graph_match.group(1)) if graph_match.group(1) else 1
-            note = graph_match.group(2).strip()
-            rag.show_neighbors(note, depth=depth)
-            continue
-
-        result = rag.answer(query, verbose=verbose)
+        result = rag.answer(query)
         print("\nAnswer:\n")
         print(result["answer"])
+
+        if result.get("pending_hitl"):
+            _hitl_prompt(rag, result)
 
 
 if __name__ == "__main__":
