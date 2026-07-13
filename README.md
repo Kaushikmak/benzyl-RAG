@@ -215,10 +215,6 @@ docker pull tastytaco/benzyl-rag:latest
 docker pull ghcr.io/kaushikmak/benzyl-rag:latest
 ```
 
-> [!IMPORTANT]
-> **Why `docker pull` may report "manifest unknown / image does not exist"**:  
-> Pre-built images are published via CI/CD (`docker-publish.yml`) only when a versioned release tag (e.g., `v1.0.0`) is published. If you are testing from the main repository branch before a release tag is pushed, use `./setup.sh` or `docker compose up -d --build` to build and run the stack locally.
-
 #### 4. Indexing & Querying Inside Docker
 
 Once containers are running (`docker compose ps`), place your document files (`.pdf`, `.docx`, `.xlsx`, `.md`, etc.) into the `./data/` folder and execute:
