@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 [![Local First](https://img.shields.io/badge/local--first-Ollama-00ADD8.svg?style=flat-square)](https://ollama.com/)
 [![Vector DB](https://img.shields.io/badge/vector%20db-Qdrant-DC143C.svg?style=flat-square)](https://qdrant.tech/)
-[![Docker](https://img.shields.io/badge/docker-ready-2496ED.svg?style=flat-square)](https://www.docker.com/)
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-tastytaco%2Fbenzyl--rag-2496ED.svg?style=flat-square&logo=docker)](https://hub.docker.com/r/tastytaco/benzyl-rag)
 
 **The missing bond between you and your documents**
 
@@ -161,6 +161,8 @@ Benzyl RAG uses specialized agents to handle different tasks automatically. Most
 ## Setup & Usage
 
 ### Option A: Docker & Containerization (Recommended)
+
+> **Official Pre-built Image:** Available on Docker Hub at [**`tastytaco/benzyl-rag`**](https://hub.docker.com/r/tastytaco/benzyl-rag).
 
 Run the entire RAG engine and Qdrant vector database in isolated containers (`benzyl-rag` project):
 
