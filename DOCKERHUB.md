@@ -11,7 +11,7 @@ Benzyl RAG is a RAG (Retrieval-Augmented Generation) pipeline that parses multi-
 - **Hybrid Retrieval (`Qdrant` + `BM25` + `RRF`)**: Combines 1024-dimensional dense semantic embeddings (`BAAI/bge-m3`) with sparse exact keyword matching (`Rank-BM25`), normalized via Reciprocal Rank Fusion ($k_{rrf}=60$) and rescored with a Cross-Encoder reranker (`BAAI/bge-reranker-v2-m3`).
 - **Adversarial Guardrails**: Defends against OWASP LLM Top 10 threats including **Corpus Poisoning** (near-duplicate clustering & outlier quarantine) and **Indirect Prompt Injection** (Unicode normalization & untrusted data block framing).
 - **Human-In-The-Loop (HITL) Safety Gate**: Gated filesystem operations (`SAVE`, `APPEND`, `DELETE`) block mutations until explicitly approved.
-- **Local-First Privacy**: Runs against a local [Ollama](https://ollama.com/) daemon (`qwen2.5:7b`). Your documents and queries never leave your machine.
+- **Local-First Privacy**: Runs against a local [Ollama](https://ollama.com/) daemon (`qwen3:8b`). Your documents and queries never leave your machine.
 
 ## Quickstart with Docker Compose
 
@@ -29,18 +29,36 @@ services:
     volumes:
       - ./data/qdrant_storage:/qdrant/storage
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: benzyl-rag-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./data/ollama_storage:/root/.ollama
+
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: benzyl-rag-ollama-init
+    depends_on:
+      - ollama
+    entrypoint: /bin/sh
+    command:
+      - "-c"
+      - "sleep 5; ollama --host http://ollama:11434 pull qwen3:8b"
+
   rag-app:
     image: tastytaco/benzyl-rag:latest
     container_name: benzyl-rag-app
     depends_on:
       - qdrant
+      - ollama
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - DATA_DIR=/app/data
-      - OLLAMA_URL=http://host.docker.internal:11434
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=qwen3:8b
     volumes:
       - ./data:/app/data
       - ./.data:/app/.data
@@ -51,7 +69,7 @@ services:
 
 ### 1. Index Your Documents
 
-Place your files (`.pdf`, `.docx`, etc.) inside `./data/`, ensure Ollama is running on your host machine, and run:
+Place your files (`.pdf`, `.docx`, etc.) inside `./data/` and run:
 
 ```bash
 docker compose run --rm rag-app python main.py index

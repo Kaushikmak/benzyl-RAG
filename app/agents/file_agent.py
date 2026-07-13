@@ -18,33 +18,37 @@ class FileAgent:
     def validate_target_path(
         self, filename: str, whitelist_root: Optional[str] = None
     ) -> str:
-        """Validate that filename resolves strictly under whitelist_root (following symlinks).
-        Raises SecurityException if path traversal or symlink escape outside whitelist root is detected.
+        """Validate that filename resolves strictly under whitelist_root across Windows, macOS, and Linux.
+        Raises SecurityException if path traversal outside whitelist root is detected.
         """
         from pathlib import Path
         from app.agents.exceptions import SecurityException
 
-        root_str = whitelist_root or self.workspace_root
-        resolved_root = Path(root_str).resolve()
+        root_str = os.path.abspath(whitelist_root or self.workspace_root)
+        resolved_root = os.path.realpath(root_str)
 
-        target = Path(filename)
-        if target.is_absolute():
-            cand = target
+        if os.path.isabs(filename):
+            cand = filename
         else:
-            cand = resolved_root / target
+            cand = os.path.join(resolved_root, filename)
 
-        if cand.exists():
-            resolved_target = cand.resolve()
-        else:
-            resolved_target = cand.parent.resolve() / cand.name
+        resolved_target = os.path.realpath(os.path.abspath(cand))
 
+        # Cross-platform commonpath check handles Windows case-insensitivity and drive letters reliably
         try:
-            resolved_target.relative_to(resolved_root)
+            norm_root = os.path.normcase(resolved_root)
+            norm_target = os.path.normcase(resolved_target)
+            common = os.path.commonpath([norm_root, norm_target])
+            if common != norm_root:
+                raise SecurityException(
+                    f"Security Error: Target path '{filename}' ({resolved_target}) resolves outside whitelist root '{resolved_root}'."
+                )
         except ValueError:
+            # ValueError occurs on Windows if paths are on different drives
             raise SecurityException(
                 f"Security Error: Target path '{filename}' ({resolved_target}) resolves outside whitelist root '{resolved_root}'."
             )
-        return str(resolved_target)
+        return resolved_target
 
     def _sanitize_path(self, filename: str) -> str:
         """Sanitize filename to prevent path traversal outside workspace root."""
@@ -55,7 +59,7 @@ class FileAgent:
         q = query.strip()
 
         delete_match = re.search(
-            r"\b(delete|remove|rm)\s+(the\s+)?(file\s+)?([a-zA-Z0-9_\-\.\/]+\.[a-zA-Z0-9]+)\b",
+            r"\b(delete|remove|rm)\s+(the\s+)?(file\s+)?((?:[a-zA-Z]:[\\/])?[a-zA-Z0-9_\-\.\/\\]+\.[a-zA-Z0-9]+)\b",
             q,
             re.IGNORECASE,
         )
@@ -68,7 +72,7 @@ class FileAgent:
             }
 
         save_match = re.search(
-            r"(.*?)(?:and\s+)?\b(save|write|export|output|dump|create)\b.*?\b(?:file\s+(?:named|as)\s+|name\s+(?:that\s+)?file\s+as\s+|to\s+file\s+named\s+|to\s+file\s+|to\s+|in\s+)([a-zA-Z0-9_\-\.\/]+\.[a-zA-Z0-9]{2,4})\b.*$",
+            r"(.*?)(?:and\s+)?\b(save|write|export|output|dump|create)\b.*?\b(?:file\s+(?:named|as|is)\s+|name\s+(?:that\s+)?file\s+as\s+|to\s+file\s+named\s+|to\s+file\s+|to\s+|in\s+|as\s+|is\s+)?((?:[a-zA-Z]:[\\/])?[a-zA-Z0-9_\-\.\/\\]+\.[a-zA-Z0-9]{2,4})\b.*$",
             q,
             re.IGNORECASE | re.DOTALL,
         )
@@ -83,7 +87,7 @@ class FileAgent:
             }
 
         simple_save = re.search(
-            r"^(save|write|export|create)\s+(.+?)\s+(?:to|in|as)\s+([a-zA-Z0-9_\-\.\/]+\.[a-zA-Z0-9]{2,4})$",
+            r"^(save|write|export|create)\s+(.+?)\s+(?:to|in|as|is)\s+((?:[a-zA-Z]:[\\/])?[a-zA-Z0-9_\-\.\/\\]+\.[a-zA-Z0-9]{2,4})$",
             q,
             re.IGNORECASE,
         )
@@ -97,7 +101,7 @@ class FileAgent:
             }
 
         general_save = re.search(
-            r"^(.*?)\s*\b(save|write|export|output|dump|create|put)\b.*?\b(?:in|to|as|named)?\s*(?:file\s+)?([a-zA-Z0-9_\-\.\/]+\.[a-zA-Z0-9]{2,4})\b(.*)$",
+            r"^(.*?)\s*\b(save|write|export|output|dump|create|put)\b.*?\b(?:in|to|as|is|named)?\s*(?:file\s+)?((?:[a-zA-Z]:[\\/])?[a-zA-Z0-9_\-\.\/\\]+\.[a-zA-Z0-9]{2,4})\b(.*)$",
             q,
             re.IGNORECASE | re.DOTALL,
         )

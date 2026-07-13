@@ -27,7 +27,15 @@ def atomic_write_file(target_path: str, content: str, workspace_root: Optional[s
             f.write(content)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp_path, abs_target)
+        try:
+            os.replace(tmp_path, abs_target)
+        except (PermissionError, FileExistsError):
+            if os.path.exists(abs_target):
+                try:
+                    os.remove(abs_target)
+                except Exception:
+                    pass
+            os.replace(tmp_path, abs_target)
         logger.info("Atomic write complete: %s (%d bytes)", abs_target, len(content.encode("utf-8")))
         return abs_target
     except Exception as e:

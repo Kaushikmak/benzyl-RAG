@@ -12,6 +12,27 @@ services:
       - ./data/qdrant_storage:/qdrant/storage:z
     restart: unless-stopped
 
+  # The Local LLM Server (Ollama)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: benzyl-rag-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./data/ollama_storage:/root/.ollama:z
+    restart: unless-stopped
+
+  # Automated model downloader
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: benzyl-rag-ollama-init
+    depends_on:
+      - ollama
+    entrypoint: /bin/sh
+    command:
+      - "-c"
+      - "sleep 5; echo '[Ollama Init] Pulling default model qwen3:8b...'; ollama --host http://ollama:11434 pull qwen3:8b; echo '[Ollama Init] Model qwen3:8b ready.'"
+
   rag-app:
     build:
       context: .
@@ -20,13 +41,13 @@ services:
     container_name: benzyl-rag-app
     depends_on:
       - qdrant
+      - ollama
     environment:
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - DATA_DIR=/app/data
-      - OLLAMA_URL=http://host.docker.internal:11434
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=qwen3:8b
     volumes:
       - ./data:/app/data:z
       - ./.data:/app/.data:z

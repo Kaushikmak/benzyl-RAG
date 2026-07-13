@@ -104,7 +104,7 @@ Benzyl RAG is a local-first AI assistant that understands your document collecti
 
 - **Orchestration Engine**: Modular multi-agent engine. Decouples monolithic RAG scripts into specialized single-responsibility agents executing a deterministic pipeline.
 - **Adversarial Guardrails & Secure Prompt Framing**: Near-duplicate clustering (`Jaccard >= 0.82`), Z-score outlier quarantine ($z > 2.0\sigma$), Graph-Expansion Gate (`sim >= 0.25`), Unicode NFKC sanitization, and explicit `<<< UNTRUSTED_DATA_BLOCK >>>` framing. Protects against OWASP LLM Top 10 threats including Corpus Poisoning (adversaries flooding retrieval pools with duplicates) and Indirect Prompt Injection (hidden instructions inside documents).
-- **Local LLM Synthesis (`Ollama` + `qwen2.5:7b`)**: Local Ollama daemon running `qwen2.5:7b` (configurable in `config.py`). Keeps data local-first-user documents and queries never leave the local machine.
+- **Local LLM Synthesis (`Ollama` + `qwen3:8b`)**: Local Ollama daemon running `qwen3:8b` (configurable in `config.py`). Keeps data local-first-user documents and queries never leave the local machine.
 - **Atomic Filesystem Operations & HITL Safety Gate**:
   - Atomic file writing and a persistent serialized state machine: any file write (`SAVE`/`APPEND`) or `DELETE` creates a `HITLApprovalRequest` in `PENDING` state and blocks execution until explicitly approved (`approve_action`), preventing unauthorized mutations or filesystem corruption.
 
@@ -179,11 +179,33 @@ git pull origin main
 
 ### Option A: Docker & Containerization (Recommended)
 
-Benzyl RAG is pre-built and published for both **Intel/AMD (`linux/amd64`)** and **Apple Silicon / ARM (`linux/arm64`)** architectures, ensuring seamless execution across macOS, Linux, and Windows without manual architecture translation.
+Benzyl RAG runs as a fully self-contained multi-container stack (**Qdrant Vector DB**, **Ollama LLM Server**, and the **Benzyl RAG Multi-Agent Engine**). You do **not** need to install or run Ollama separately on your host machine—Docker automatically downloads and manages the default **`qwen3:8b`** model inside a persistent container volume.
 
-#### 1. Pull the Pre-built Docker Image
+#### 1. Launching Containers (Self-Contained Automated Setup)
 
-You can pull the official multi-architecture image directly from Docker Hub or GitHub Container Registry (GHCR):
+The easiest way to get started immediately from your local checkout is to run the automated setup script or Docker Compose build:
+
+- **macOS (Intel & Apple Silicon M1–M4) & Linux**:
+  ```bash
+  # Automated one-step setup (creates directories, builds containers, starts Ollama & Qdrant)
+  chmod +x setup.sh && ./setup.sh
+
+  # Or manually build and launch containers
+  docker compose up -d --build
+  ```
+
+- **Windows (PowerShell or Command Prompt)**:
+  ```powershell
+  # Launch self-contained Qdrant + Ollama + RAG containers
+  docker compose up -d --build
+  ```
+
+> [!NOTE]
+> **Automated Ollama Model Download**: Upon startup, the `ollama-init` service automatically pulls **`qwen3:8b`** into `./data/ollama_storage`. This only happens once; subsequent restarts reuse the downloaded model volume.
+
+#### 2. Pulling Pre-built Docker Images (Optional)
+
+Official multi-architecture images (`linux/amd64` and `linux/arm64`) are published to Docker Hub and GitHub Container Registry whenever a official release tag (`v*`) is released:
 
 ```bash
 # Pull from Docker Hub
@@ -193,29 +215,9 @@ docker pull tastytaco/benzyl-rag:latest
 docker pull ghcr.io/kaushikmak/benzyl-rag:latest
 ```
 
-#### 2. Prerequisites
-- **Docker Desktop** (macOS/Windows) or **Docker Engine + Docker Compose** (Linux) installed and running.
-- **[Ollama](https://ollama.com/)** running on your host machine with your target LLM pulled:
-  ```bash
-  ollama pull qwen2.5:7b
-  ```
-
-#### 3. Launching Containers by Operating System
-
-- **macOS (Intel & Apple Silicon M1–M4) & Linux**:
-  ```bash
-  # Automated one-step setup
-  chmod +x setup.sh && ./setup.sh
-
-  # Or manually start isolated Qdrant + RAG containers
-  docker compose up -d
-  ```
-
-- **Windows (PowerShell or Command Prompt)**:
-  ```powershell
-  # Launch isolated Qdrant + RAG containers
-  docker compose up -d
-  ```
+> [!IMPORTANT]
+> **Why `docker pull` may report "manifest unknown / image does not exist"**:  
+> Pre-built images are published via CI/CD (`docker-publish.yml`) only when a versioned release tag (e.g., `v1.0.0`) is published. If you are testing from the main repository branch before a release tag is pushed, use `./setup.sh` or `docker compose up -d --build` to build and run the stack locally.
 
 #### 4. Indexing & Querying Inside Docker
 
@@ -294,7 +296,7 @@ pip install -r requirements.txt
 Ensure [Ollama](https://ollama.com/) is running locally and pull the default model:
 
 ```bash
-ollama pull qwen2.5:7b
+ollama pull qwen3:8b
 ```
 
 #### 5. Index Your Documents Locally
@@ -324,7 +326,7 @@ python main.py query -q "Explain the main architectural decisions."
 
 All major settings are located in `app/config.py`:
 
-- `OLLAMA_MODEL`: The canonical local LLM to use (default: `qwen2.5:7b`; alternates such as `qwen3:8b` or `llama3` work seamlessly).
+- `OLLAMA_MODEL`: The canonical local LLM to use (default: `qwen3:8b`; alternates such as `llama3` work seamlessly).
 - `EMBED_MODEL`: The HuggingFace embedding model (default: `BAAI/bge-m3`).
 - `RERANK_MODEL`: The cross-encoder used for reranking (default: `BAAI/bge-reranker-v2-m3`).
 - Chunking limits, vector store paths, and device settings (`cuda` vs `cpu`) can also be toggled here.
