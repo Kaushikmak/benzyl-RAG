@@ -85,4 +85,4 @@ docker compose run --rm rag-app python main.py query -q "What is the authenticat
 
 ## License & Source Code
 
-- **GitHub Repository**: [Kaushikmak/obsidianRag](https://github.com/Kaushikmak/benzyl-RAG)
+- **GitHub Repository**: [Kaushikmak/benzyl-RAG](https://github.com/Kaushikmak/benzyl-RAG)
