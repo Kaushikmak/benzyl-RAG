@@ -160,76 +160,164 @@ Benzyl RAG uses specialized agents to handle different tasks automatically. Most
 
 ## Setup & Usage
 
-### Option A: Docker & Containerization (Recommended)
+### Getting the Code
 
-> **Official Pre-built Image:** Available on Docker Hub at [**`tastytaco/benzyl-rag`**](https://hub.docker.com/r/tastytaco/benzyl-rag).
-
-Run the entire RAG engine and Qdrant vector database in isolated containers (`benzyl-rag` project):
+Clone the repository to your local machine:
 
 ```bash
-# Quick automated setup & build
-./setup.sh
-
-# Or manually launch containers
-docker compose up -d --build
-
-# Index documents inside the container
-docker compose exec -it rag-app python main.py index
-
-# Run CLI inside the container
-docker compose exec -it rag-app python main.py cli
+git clone https://github.com/Kaushikmak/benzyl-RAG.git
+cd benzyl-RAG
 ```
 
-### Option B: Local Python Environment
-
-#### 1. Prerequisites
-
-- Python 3.10+
-- System packages: `tesseract` and `poppler-utils` (required for image-only PDF page parsing and OCR fallback via pdf2image and pytesseract)
-- [Ollama](https://ollama.com/) installed on your host machine.
-
-#### 2. Configuration
-
-1. Place your documents (`.pdf`, `.docx`, `.xlsx`, `.html`, `.txt`, `.md`, etc.) inside `data/`.
-2. Make sure Ollama is running and pull your preferred model (e.g., `ollama pull qwen2.5:7b` or whatever is defined as `OLLAMA_MODEL` in `app/config.py`).
-
-#### 3. Installation
-
-Create a virtual environment and install the dependencies:
+To update an existing installation to the latest version at any time:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+git pull origin main
+```
+
+---
+
+### Option A: Docker & Containerization (Recommended)
+
+Benzyl RAG is pre-built and published for both **Intel/AMD (`linux/amd64`)** and **Apple Silicon / ARM (`linux/arm64`)** architectures, ensuring seamless execution across macOS, Linux, and Windows without manual architecture translation.
+
+#### 1. Pull the Pre-built Docker Image
+
+You can pull the official multi-architecture image directly from Docker Hub or GitHub Container Registry (GHCR):
+
+```bash
+# Pull from Docker Hub
+docker pull tastytaco/benzyl-rag:latest
+
+# Or pull from GitHub Container Registry
+docker pull ghcr.io/kaushikmak/benzyl-rag:latest
+```
+
+#### 2. Prerequisites
+- **Docker Desktop** (macOS/Windows) or **Docker Engine + Docker Compose** (Linux) installed and running.
+- **[Ollama](https://ollama.com/)** running on your host machine with your target LLM pulled:
+  ```bash
+  ollama pull qwen2.5:7b
+  ```
+
+#### 3. Launching Containers by Operating System
+
+- **macOS (Intel & Apple Silicon M1–M4) & Linux**:
+  ```bash
+  # Automated one-step setup
+  chmod +x setup.sh && ./setup.sh
+
+  # Or manually start isolated Qdrant + RAG containers
+  docker compose up -d
+  ```
+
+- **Windows (PowerShell or Command Prompt)**:
+  ```powershell
+  # Launch isolated Qdrant + RAG containers
+  docker compose up -d
+  ```
+
+#### 4. Indexing & Querying Inside Docker
+
+Once containers are running (`docker compose ps`), place your document files (`.pdf`, `.docx`, `.xlsx`, `.md`, etc.) into the `./data/` folder and execute:
+
+```bash
+# 1. Index documents into the vector database
+docker compose exec -it rag-app python main.py index
+
+# 2. Start the interactive multi-agent CLI assistant
+docker compose exec -it rag-app python main.py cli
+
+# 3. Or run a one-shot non-interactive query
+docker compose exec -it rag-app python main.py query -q "Summarize the key findings in the documents."
+```
+
+---
+
+### Option B: Local Python Environment (Native Installation)
+
+If you prefer running Benzyl RAG directly on your machine without Docker, follow these OS-specific steps.
+
+#### 1. System Prerequisites
+
+The ingestion pipeline requires `tesseract-ocr` and `poppler-utils` for OCR and image-only PDF layout parsing.
+
+- **macOS (Intel & Apple Silicon)**:
+  Install system packages using [Homebrew](https://brew.sh/):
+  ```bash
+  brew install tesseract poppler python@3.11
+  ```
+
+- **Linux (Ubuntu / Debian / Linux Mint)**:
+  Install system packages using `apt`:
+  ```bash
+  sudo apt update && sudo apt install -y \
+      tesseract-ocr \
+      poppler-utils \
+      python3-venv \
+      python3-pip \
+      build-essential
+  ```
+
+- **Windows (10/11)**:
+  - **WSL2 Ubuntu (Recommended)**: Follow the Linux (Ubuntu/Debian) instructions above inside your WSL2 terminal.
+  - **Native Windows**:
+    1. Install Python 3.10 or 3.11 from [python.org](https://www.python.org/downloads/).
+    2. Install [Tesseract OCR for Windows](https://github.com/UB-Mannheim/tesseract/wiki) and add `C:\Program Files\Tesseract-OCR` to your system `PATH`.
+    3. Download [Poppler for Windows](https://github.com/oschwartz10612/poppler-windows) binaries and add its `Library\bin` directory to your system `PATH`.
+
+#### 2. Create & Activate a Virtual Environment
+
+After cloning/pulling the repository (`git pull origin main`), set up your Python environment:
+
+- **macOS & Linux**:
+  ```bash
+  python3 -m venv .venv
+  source .venv/bin/activate
+  ```
+
+- **Windows (PowerShell)**:
+  ```powershell
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  ```
+
+#### 3. Install Python Dependencies
+
+```bash
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-#### 4. Indexing Your Documents
+#### 4. Configure & Start Ollama
 
-Before you can chat, you must index your documents. This processes your files into vector embeddings, keyword chunks, and a document relationship graph.
+Ensure [Ollama](https://ollama.com/) is running locally and pull the default model:
+
+```bash
+ollama pull qwen2.5:7b
+```
+
+#### 5. Index Your Documents Locally
+
+Place your documents inside `./data/` and index them:
 
 ```bash
 python main.py index
 ```
 
-_Note: Re-running `python main.py index` rebuilds the Qdrant collections (`document_chunks` & `document_nodes`) cleanly (`force_recreate=True`), preventing stale or duplicate entries across reindexing runs._
+*(Re-running `python main.py index` cleanly recreates the local vector collections to prevent duplicate chunks).*
 
-#### 5. Running the Application & Inspecting Guardrails Telemetry
-
-Use the unified pipeline runner script `scripts/run_pipeline.sh`:
+#### 6. Run the Application
 
 ```bash
-# 1. Interactive CLI mode
+# Interactive CLI Chat
+python main.py cli
+
+# Or execute one-shot queries
+python main.py query -q "Explain the main architectural decisions."
+
+# On macOS/Linux, you can also use the unified pipeline runner:
 ./scripts/run_pipeline.sh cli
-
-# 2. One-shot query through Guardrails defenses
-./scripts/run_pipeline.sh query -q "How does the authentication middleware work?"
-
-# 3. Evaluate Guardrails defense benchmarks
-./scripts/run_pipeline.sh eval
-
-# 4. Run automated unit tests
-./scripts/run_pipeline.sh test
 ```
 
 ## Configuration Details
