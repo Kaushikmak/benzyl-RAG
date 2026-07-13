@@ -1,0 +1,35 @@
+name: benzyl-rag
+
+services:
+  # The Vector Database Server
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: benzyl-rag-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./data/qdrant_storage:/qdrant/storage:z
+    restart: unless-stopped
+
+  rag-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: benzyl-rag:latest
+    container_name: benzyl-rag-app
+    depends_on:
+      - qdrant
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - DATA_DIR=/app/data
+      - OLLAMA_URL=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/app/data:z
+      - ./.data:/app/.data:z
+      - ./.mission_state:/app/.mission_state:z
+    stdin_open: true
+    tty: true

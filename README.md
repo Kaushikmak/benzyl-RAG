@@ -57,9 +57,29 @@ Every query runs through a deterministic 14-stage pipeline across 16 agents. Mos
 
 ---
 
-## Setup & Usage (Local Python Environment)
+## Setup & Usage
 
-### 1. Prerequisites
+### Option A: Docker & Containerization (Recommended)
+
+Run the entire RAG engine and Qdrant vector database in isolated containers (`benzyl-rag` project):
+
+```bash
+# Quick automated setup & build
+./setup.sh
+
+# Or manually launch containers
+docker compose up -d --build
+
+# Index documents inside the container
+docker compose exec -it rag-app python main.py index
+
+# Run CLI inside the container
+docker compose exec -it rag-app python main.py cli
+```
+
+### Option B: Local Python Environment
+
+#### 1. Prerequisites
 
 - Python 3.10+
 - System packages: `tesseract` (`/usr/bin/tesseract`) and `poppler-utils` (required for image-only PDF page rasterization and OCR fallback via `pdf2image` and `pytesseract`)

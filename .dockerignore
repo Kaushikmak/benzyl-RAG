@@ -1,0 +1,15 @@
+.venv/
+venv/
+env/
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+.data/
+data/
+.mission_state/
+
+.git/
+.env

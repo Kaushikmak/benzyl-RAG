@@ -1,5 +1,10 @@
+import os
+
 DATA_DIR = "./data"
 STORAGE_DIR = "./.data"
+
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", 6333))
 
 QDRANT_DIR = "./.data/qdrant_db"
 QDRANT_CHUNK_COLLECTION = "document_chunks"
@@ -14,8 +19,8 @@ GRAPH_PATH = "./.data/graph.pkl"
 EMBED_MODEL = "BAAI/bge-m3"
 RERANK_MODEL = "BAAI/bge-reranker-v2-m3"
 
-OLLAMA_MODEL = "qwen3:8b"
-
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
 OLLAMA_NUM_CTX = 8192
 OLLAMA_TIMEOUT = 180.0
 
