@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     build-essential \
     curl \
+    zstd \
     && curl -fsSL https://ollama.com/install.sh | sh \
     && rm -rf /var/lib/apt/lists/*
 
