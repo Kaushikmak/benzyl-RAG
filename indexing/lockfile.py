@@ -46,6 +46,32 @@ class IndexLockfile:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _get_boot_id(self) -> Optional[str]:
+        """Return system boot ID if readable, or None."""
+        try:
+            with open("/proc/sys/kernel/random/boot_id", "r") as f:
+                return f.read().strip()
+        except Exception:
+            return None
+
+    def _get_container_id(self) -> Optional[str]:
+        """Return container identifier or hostname if in Docker/container environment."""
+        if os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv"):
+            try:
+                import socket
+                return socket.gethostname()
+            except Exception:
+                return "docker-container"
+        try:
+            with open("/proc/self/cgroup", "r") as f:
+                content = f.read()
+                if "docker" in content or "containerd" in content or "kubepods" in content:
+                    import socket
+                    return socket.gethostname()
+        except Exception:
+            pass
+        return None
+
     def _pid_is_running(self, pid: int) -> bool:
         """Return True if process with given PID exists."""
         try:
@@ -59,35 +85,68 @@ class IndexLockfile:
             return False
 
     def _read_lock(self):
-        """Return (pid, timestamp) from lock file, or (None, None) on parse failure."""
+        """Return (pid, timestamp, boot_id, container_id) from lock file, or (None, None, None, None) on parse failure."""
         try:
             with open(self.lock_path, "r") as f:
                 data = json.load(f)
-            return int(data.get("pid", 0)), float(data.get("timestamp", 0.0))
+            return (
+                int(data.get("pid", 0)),
+                float(data.get("timestamp", 0.0)),
+                data.get("boot_id"),
+                data.get("container_id"),
+            )
         except Exception:
-            return None, None
+            return None, None, None, None
 
     def _write_lock(self) -> None:
-        """Atomically create lock file with current PID and timestamp."""
+        """Atomically create lock file with current PID, timestamp, boot_id, and container_id."""
         os.makedirs(os.path.dirname(self.lock_path) or ".", exist_ok=True)
         fd = os.open(
             self.lock_path,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL,
         )
         try:
-            payload = json.dumps({"pid": os.getpid(), "timestamp": time.time()}).encode()
+            payload = json.dumps({
+                "pid": os.getpid(),
+                "timestamp": time.time(),
+                "boot_id": self._get_boot_id(),
+                "container_id": self._get_container_id(),
+            }).encode()
             os.write(fd, payload)
         finally:
             os.close(fd)
 
     def _try_clear_stale(self) -> bool:
         """Inspect current lock file; clear it if stale.  Return True if cleared."""
-        pid, ts = self._read_lock()
+        pid, ts, lock_boot_id, lock_container_id = self._read_lock()
         if pid is None:
             # Can't parse lock -> treat as stale
             try:
                 os.remove(self.lock_path)
                 logger.warning("IndexLockfile: removed unparseable stale lock '%s'.", self.lock_path)
+            except FileNotFoundError:
+                pass
+            return True
+
+        curr_boot_id = self._get_boot_id()
+        if lock_boot_id and curr_boot_id and lock_boot_id != curr_boot_id:
+            logger.warning(
+                "IndexLockfile: lock held across system reboot (boot_id mismatch). Auto-clearing."
+            )
+            try:
+                os.remove(self.lock_path)
+            except FileNotFoundError:
+                pass
+            return True
+
+        curr_container_id = self._get_container_id()
+        if lock_container_id and curr_container_id and lock_container_id != curr_container_id:
+            logger.warning(
+                "IndexLockfile: lock held by previous container instance ('%s' vs current '%s'). Auto-clearing.",
+                lock_container_id, curr_container_id,
+            )
+            try:
+                os.remove(self.lock_path)
             except FileNotFoundError:
                 pass
             return True
@@ -147,7 +206,7 @@ class IndexLockfile:
                 except FileExistsError:
                     pass  # fall through to raise
 
-            pid, ts = self._read_lock()
+            pid, ts, boot_id, container_id = self._read_lock()
             age = time.time() - (ts or time.time())
             raise LockAlreadyHeldError(
                 f"Index lock is held by PID {pid} (age {age:.0f}s). "
@@ -169,8 +228,14 @@ class IndexLockfile:
         """Return True if a non-stale lock exists (useful for query-time checks)."""
         if not os.path.exists(self.lock_path):
             return False
-        pid, ts = self._read_lock()
+        pid, ts, boot_id, container_id = self._read_lock()
         if pid is None:
+            return False
+        curr_boot = self._get_boot_id()
+        if boot_id and curr_boot and boot_id != curr_boot:
+            return False
+        curr_container = self._get_container_id()
+        if container_id and curr_container and container_id != curr_container:
             return False
         age = time.time() - (ts or 0.0)
         if age > self.staleness_seconds:
@@ -180,7 +245,7 @@ class IndexLockfile:
     def warn_if_locked(self) -> None:
         """Log a clear warning if an index write is currently in progress."""
         if self.is_locked():
-            pid, ts = self._read_lock()
+            pid, ts, boot_id, container_id = self._read_lock()
             age = time.time() - (ts or time.time())
             logger.warning(
                 "[benzene-rag] An index write is currently in progress (PID %d, age %.0fs). "

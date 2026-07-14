@@ -17,6 +17,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Free disk space on runner
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -42,6 +53,8 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            OLLAMA_MODEL=qwen2.5:3b
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/benzyl-rag:${{ github.ref_name }}
             ${{ secrets.DOCKERHUB_USERNAME }}/benzyl-rag:latest

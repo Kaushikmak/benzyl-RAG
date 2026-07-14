@@ -38,6 +38,8 @@ from app.agents.status_agent import StatusAgent
 from app.agents.synthesis_agent import SynthesisAgent
 from app.agents.verification_agent import VerificationAgent
 from app.agents.utils import load_snapshot, save_snapshot, update_snapshot
+from app.agents.state import MissionState
+from app.agents.graph import build_agent_graph
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +86,26 @@ class AgentOrchestrator:
         self.file_agent = FileAgent(workspace_root=workspace_root)
         self.math_agent = MathAgent()
         self.status_agent = StatusAgent()
+
+        agents_dict = {
+            "security": self.security_agent,
+            "planner": self.planner_agent,
+            "rewrite": self.rewrite_agent,
+            "cache": self.cache_agent,
+            "researcher": self.researcher_agent,
+            "compression": self.compression_agent,
+            "reranker": self.reranker_agent,
+            "citation": self.citation_agent,
+            "synthesis": self.synthesis_agent,
+            "reflection": self.reflection_agent,
+            "verification": self.verification_agent,
+            "formatter": self.formatter_agent,
+            "observability": self.observability_agent,
+            "file": self.file_agent,
+            "math": self.math_agent,
+            "status": self.status_agent,
+        }
+        self.graph = build_agent_graph(agents_dict)
 
         self._conversational_greetings = {
             "hello",
@@ -191,118 +213,46 @@ class AgentOrchestrator:
         target_format: str = "Markdown",
         require_hitl_for_files: bool = True,
     ) -> MissionSnapshot:
-        """Execute the 14-stage multi-agent orchestration pipeline."""
+        """Execute the multi-agent orchestration pipeline using LangGraph StateGraph."""
         req_id = request_id or uuid.uuid4().hex
         timestamps: Dict[str, float] = {"start": time.perf_counter()}
-
         logger.info("Mission %s started for query: '%s'", req_id, query)
 
-        # Stage 1: SecurityAgent inbound inspection
-        risk_report = self.security_agent.audit_inbound_prompt(query)
-        if not risk_report.is_safe:
-            logger.error("Mission %s aborted by SecurityAgent: %s", req_id, risk_report.reason)
-            raise SecurityException(f"Inbound prompt blocked: {risk_report.reason}")
+        initial_state: MissionState = {
+            "query": query,
+            "request_id": req_id,
+            "target_format": target_format,
+            "require_hitl_for_files": require_hitl_for_files,
+            "timestamps": timestamps,
+            "retry_count": 0,
+        }
 
-        # Stage 2: PlannerAgent
-        file_intent = self.file_agent.parse_intent(query)
-        effective_query = file_intent["core_query"] if file_intent and file_intent.get("core_query") else query
-        retrieval_plan = self.planner_agent.create_retrieval_plan(effective_query)
+        config = {"configurable": {"thread_id": req_id}}
+        final_state = self.graph.invoke(initial_state, config=config)
 
-        # Stage 3: RewriteAgent
-        rewritten_query = self.rewrite_agent.rewrite(effective_query, retrieval_plan)
+        if not final_state.get("is_safe", True):
+            reason = final_state.get("security_reason", "Inbound prompt blocked")
+            logger.error("Mission %s aborted by SecurityAgent: %s", req_id, reason)
+            raise SecurityException(f"Inbound prompt blocked: {reason}")
 
-        # Stage 4: CacheAgent check
-        cache_key = f"mission:{rewritten_query}|{retrieval_plan.get('top_k')}"
-        cached_report = self.cache_agent.get(cache_key)
-        if cached_report:
-            timestamps["end"] = time.perf_counter()
-            metrics = self.observability_agent.record_metrics(
-                timestamps, chunk_count=0, cache_hit=True
-            )
-            logger.info("Mission %s hit CacheAgent", req_id)
-            return MissionSnapshot(
-                request_id=req_id,
-                original_query=query,
-                rewritten_query=rewritten_query,
-                retrieval_plan=retrieval_plan,
-                synthesized_report=str(cached_report),
-                metrics=metrics,
-                timestamps=timestamps,
-            )
-
-        # Stage 5: ResearcherAgent retrieval
-        raw_chunks = self.researcher_agent.retrieve(rewritten_query, retrieval_plan)
-        timestamps["retrieved"] = time.perf_counter()
-
-        # Stage 6: SecurityAgent chunk audit
-        safe_chunks, quarantined_chunks = self.security_agent.audit_retrieved_chunks(raw_chunks)
-
-        # Stage 7: CompressionAgent deduplication
-        compressed_chunks = self.compression_agent.compress(safe_chunks)
-
-        # Stage 8: RerankerAgent
-        top_k = retrieval_plan.get("top_k", 5)
-        reranked_chunks = self.reranker_agent.rerank(rewritten_query, compressed_chunks, top_k=top_k)
-        timestamps["reranked"] = time.perf_counter()
-
-        # Stage 9: CitationAgent extraction
-        citations = self.citation_agent.extract_citations(reranked_chunks)
-
-        # Stage 10: SynthesisAgent
-        synthesized_report = self.synthesis_agent.synthesize(rewritten_query, reranked_chunks, citations)
-        timestamps["synthesized"] = time.perf_counter()
-
-        # Stage 11: ReflectionAgent audit
-        reflection_data = self.reflection_agent.reflect(rewritten_query, synthesized_report, reranked_chunks)
-        if reflection_data.get("needs_retry"):
-            logger.warning("Mission %s ReflectionAgent requested retry logic", req_id)
-
-        # Stage 12: VerificationAgent final gate
-        verification_report = self.verification_agent.verify(rewritten_query, synthesized_report, citations)
-
-        # Stage 13: FormatterAgent
-        formatted_report = self.formatter_agent.format(synthesized_report, target_format=target_format)
-        self.cache_agent.put(cache_key, formatted_report)
-
-        timestamps["end"] = time.perf_counter()
-
-        # Stage 14: ObservabilityAgent metrics
-        approval_req_cnt = 1 if (file_intent and require_hitl_for_files) else 0
-        metrics = self.observability_agent.record_metrics(
-            timestamps,
-            chunk_count=len(reranked_chunks),
-            cache_hit=False,
-            security_violations=len(quarantined_chunks),
-            approval_requests=approval_req_cnt,
-            failures=0,
-        )
-
-        hitl_request: Optional[HITLApprovalRequest] = None
-        if file_intent and require_hitl_for_files:
-            action_type = file_intent["action"]
-            target_file = file_intent["target_file"]
-            self.file_agent.validate_target_path(target_file)
-            hitl_request = HITLApprovalRequest(
-                request_id=req_id,
-                action_type=action_type,
-                payload={"target_file": target_file, "content": formatted_report},
-                status=HITLStatus.PENDING,
-            )
+        hitl_request = final_state.get("hitl_request")
+        metrics = final_state.get("metrics") or MissionMetrics()
+        verification_report = final_state.get("verification_report")
 
         snapshot = MissionSnapshot(
             request_id=req_id,
             original_query=query,
-            rewritten_query=rewritten_query,
-            retrieval_plan=retrieval_plan,
-            retrieved_chunks=raw_chunks,
-            compressed_chunks=compressed_chunks,
-            reranked_chunks=reranked_chunks,
-            synthesized_report=formatted_report,
-            citations=citations,
+            rewritten_query=final_state.get("rewritten_query", ""),
+            retrieval_plan=final_state.get("retrieval_plan", {}),
+            retrieved_chunks=final_state.get("raw_chunks", []),
+            compressed_chunks=final_state.get("compressed_chunks", []),
+            reranked_chunks=final_state.get("reranked_chunks", []),
+            synthesized_report=final_state.get("synthesized_report", ""),
+            citations=final_state.get("citations", []),
             verification_report=verification_report,
             metrics=metrics,
             hitl_request=hitl_request,
-            timestamps=timestamps,
+            timestamps=final_state.get("timestamps", timestamps),
         )
 
         if hitl_request:
@@ -333,6 +283,12 @@ class AgentOrchestrator:
         snapshot.hitl_request.status = HITLStatus.EXECUTED
         snapshot.metadata["execution_report"] = execution_report
         update_snapshot(snapshot, base_dir=self.base_state_dir)
+
+        try:
+            from langgraph.types import Command
+            self.graph.invoke(Command(resume=True), config={"configurable": {"thread_id": request_id}})
+        except Exception as exc:
+            logger.debug("Checkpointer thread %s resume skipped or already completed: %s", request_id, exc)
 
         return snapshot
 

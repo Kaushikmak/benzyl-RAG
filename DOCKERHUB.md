@@ -13,9 +13,60 @@ Benzyl RAG is a RAG (Retrieval-Augmented Generation) pipeline that parses multi-
 - **Human-In-The-Loop (HITL) Safety Gate**: Gated filesystem operations (`SAVE`, `APPEND`, `DELETE`) block mutations until explicitly approved.
 - **Local-First Privacy**: Runs against a local [Ollama](https://ollama.com/) daemon (`qwen3:8b`). Your documents and queries never leave your machine.
 
-## Quickstart with Docker Compose
+## Quickstart: All-in-One Self-Contained Appliance (Recommended)
 
-Create a `docker-compose.yaml` file on your host machine:
+Our official prebuilt Docker image is an **All-in-One Self-Contained Appliance**. It comes pre-packaged with:
+- **Embedded Ollama Daemon (`ollama serve`)** running locally inside the container
+- **Pre-pulled LLM Weights (`qwen2.5:3b`)** baked directly into the image layer
+- **Pre-cached HuggingFace Models (`BAAI/bge-m3`, `BAAI/bge-reranker-v2-m3`)** pre-downloaded into container storage
+- **Embedded Qdrant Client** using local file mode
+
+You do **not** need to install Ollama separately, wait for multi-gigabyte runtime model downloads, or configure separate database containers. Everything runs offline out of the box.
+
+### 1. Pull & Index Your Documents
+
+Place your files (`.pdf`, `.docx`, etc.) into a local directory named `./data/` on your host machine and run:
+
+```bash
+# Pull the self-contained appliance
+docker pull tastytaco/benzyl-rag:latest
+
+# Index your documents (supervisor entrypoint automatically starts Ollama and runs indexing)
+docker run --rm -it \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/.data:/app/.data \
+  -v $(pwd)/outputs:/app/outputs \
+  -v $(pwd)/.mission_state:/app/.mission_state \
+  tastytaco/benzyl-rag:latest index
+```
+
+### 2. Query & Interact via CLI
+
+Start the interactive multi-agent assistant:
+
+```bash
+docker run --rm -it \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/.data:/app/.data \
+  -v $(pwd)/outputs:/app/outputs \
+  -v $(pwd)/.mission_state:/app/.mission_state \
+  tastytaco/benzyl-rag:latest cli
+```
+
+Or execute one-shot queries:
+
+```bash
+docker run --rm -it \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/.data:/app/.data \
+  tastytaco/benzyl-rag:latest query -q "What is the authentication flow?"
+```
+
+---
+
+## Optional: Multi-Service Docker Compose Setup
+
+If you prefer separating services across distinct containers, create a `docker-compose.yaml` file on your host machine:
 
 ```yaml
 name: benzyl-rag
@@ -45,7 +96,7 @@ services:
     entrypoint: /bin/sh
     command:
       - "-c"
-      - "sleep 5; ollama --host http://ollama:11434 pull qwen3:8b"
+      - "sleep 5; ollama --host http://ollama:11434 pull qwen2.5:3b"
 
   rag-app:
     image: tastytaco/benzyl-rag:latest
@@ -58,35 +109,14 @@ services:
       - QDRANT_PORT=6333
       - DATA_DIR=/app/data
       - OLLAMA_URL=http://ollama:11434
-      - OLLAMA_MODEL=qwen3:8b
+      - OLLAMA_MODEL=qwen2.5:3b
     volumes:
       - ./data:/app/data
       - ./.data:/app/.data
+      - ./outputs:/app/outputs
       - ./.mission_state:/app/.mission_state
     stdin_open: true
     tty: true
-```
-
-### 1. Index Your Documents
-
-Place your files (`.pdf`, `.docx`, etc.) inside `./data/` and run:
-
-```bash
-docker compose run --rm rag-app python main.py index
-```
-
-### 2. Query Your Documents
-
-Ask questions against your indexed knowledge base:
-
-```bash
-docker compose run --rm rag-app python main.py cli
-```
-
-Or run one-shot CLI queries:
-
-```bash
-docker compose run --rm rag-app python main.py query -q "What is the authentication flow?"
 ```
 
 ---
@@ -97,6 +127,7 @@ docker compose run --rm rag-app python main.py query -q "What is the authenticat
 | :----------------- | :-------------------- | :------------------------------------------------------------------ |
 | `./data`           | `/app/data`           | Source directory containing your raw documents to be indexed        |
 | `./.data`          | `/app/.data`          | Cached BM25 indices, metadata summaries, and graph relationships    |
+| `./outputs`        | `/app/outputs`        | Exported markdown summaries and files created by FileAgent          |
 | `./.mission_state` | `/app/.mission_state` | Persistent state for Human-in-the-Loop (HITL) file action approvals |
 
 ---

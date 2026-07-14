@@ -177,15 +177,71 @@ git pull origin main
 
 ---
 
-### Option A: Docker & Containerization (Recommended)
+### Option A: Pre-built All-in-One Docker Appliance (Recommended / Zero-Download)
 
-Benzyl RAG runs as a fully self-contained multi-container stack (**Qdrant Vector DB**, **Ollama LLM Server**, and the **Benzyl RAG Multi-Agent Engine**). You do **not** need to install or run Ollama separately on your host machine—Docker automatically downloads and manages the default **`qwen3:8b`** model inside a persistent container volume.
+Prebuilt Docker image is an **All-in-One Self-Contained Appliance**. It comes pre-packaged with:
 
-#### 1. Launching Containers (Self-Contained Automated Setup)
+- **Embedded Ollama Daemon (`ollama serve`)** running locally inside the container
+- **Pre-pulled LLM Weights (`qwen2.5:3b`)** baked into the image layer
+- **Pre-cached HuggingFace Models (`BAAI/bge-m3`, `BAAI/bge-reranker-v2-m3`)** pre-downloaded into container storage
+- **Embedded Qdrant Client** using local file mode
 
-The easiest way to get started immediately from your local checkout is to run the automated setup script or Docker Compose build:
+#### 1. Pull the Pre-built Image
+
+```bash
+# Pull official all-in-one image from Docker Hub
+docker pull tastytaco/benzyl-rag:latest
+
+# Or pull from GitHub Container Registry
+docker pull ghcr.io/kaushikmak/benzyl-rag:latest
+```
+
+#### 2. Index Your Documents
+
+Place your files (`.pdf`, `.docx`, `.xlsx`, `.md`, etc.) into a local folder named `./data/` on your host machine, then execute indexing using shorthand commands (our smart supervisor entrypoint automatically initializes Ollama and routes your command):
+
+```bash
+docker run --rm -it \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/.data:/app/.data \
+  -v $(pwd)/outputs:/app/outputs \
+  -v $(pwd)/.mission_state:/app/.mission_state \
+  tastytaco/benzyl-rag:latest index
+```
+
+#### 3. Run the Interactive Multi-Agent CLI Assistant
+
+Ask questions and export summaries against your indexed documents:
+
+```bash
+docker run --rm -it \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/.data:/app/.data \
+  -v $(pwd)/outputs:/app/outputs \
+  -v $(pwd)/.mission_state:/app/.mission_state \
+  tastytaco/benzyl-rag:latest cli
+```
+
+---
+
+### Option B: Git Pull & Build from Source (`docker build` / `docker compose`)
+
+If you prefer cloning the source code from GitHub (`git pull origin main`) to customize the build, set up your own environment, or run via multi-service Docker Compose, follow these step-by-step instructions:
+
+#### 1. Clone & Update Repository
+
+```bash
+git clone https://github.com/Kaushikmak/benzyl-RAG.git
+cd benzyl-RAG
+
+# To update an existing local repository at any time:
+git pull origin main
+```
+
+#### 2. Build & Launch via Docker Compose (Automated Multi-Container Stack)
 
 - **macOS (Intel & Apple Silicon M1–M4) & Linux**:
+
   ```bash
   # Automated one-step setup (creates directories, builds containers, starts Ollama & Qdrant)
   chmod +x setup.sh && ./setup.sh
@@ -201,23 +257,11 @@ The easiest way to get started immediately from your local checkout is to run th
   ```
 
 > [!NOTE]
-> **Automated Ollama Model Download**: Upon startup, the `ollama-init` service automatically pulls **`qwen3:8b`** into `./data/ollama_storage`. This only happens once; subsequent restarts reuse the downloaded model volume.
+> **Automated Ollama Model Download in Compose Mode**: Upon startup, the `ollama-init` service automatically pulls **`qwen2.5:3b`** into `./data/ollama_storage`. This only happens once; subsequent restarts reuse the downloaded model volume.
 
-#### 2. Pulling Pre-built Docker Images (Optional)
+#### 3. Indexing & Querying Inside Docker Compose
 
-Official multi-architecture images (`linux/amd64` and `linux/arm64`) are published to Docker Hub and GitHub Container Registry whenever a official release tag (`v*`) is released:
-
-```bash
-# Pull from Docker Hub
-docker pull tastytaco/benzyl-rag:latest
-
-# Or pull from GitHub Container Registry
-docker pull ghcr.io/kaushikmak/benzyl-rag:latest
-```
-
-#### 4. Indexing & Querying Inside Docker
-
-Once containers are running (`docker compose ps`), place your document files (`.pdf`, `.docx`, `.xlsx`, `.md`, etc.) into the `./data/` folder and execute:
+Once containers are running (`docker compose ps`), place your document files into `./data/` and run:
 
 ```bash
 # 1. Index documents into the vector database
@@ -232,7 +276,7 @@ docker compose exec -it rag-app python main.py query -q "Summarize the key findi
 
 ---
 
-### Option B: Local Python Environment (Native Installation)
+### Option C: Local Python Environment (Native Installation)
 
 If you prefer running Benzyl RAG directly on your machine without Docker, follow these OS-specific steps.
 
@@ -242,12 +286,14 @@ The ingestion pipeline requires `tesseract-ocr` and `poppler-utils` for OCR and 
 
 - **macOS (Intel & Apple Silicon)**:
   Install system packages using [Homebrew](https://brew.sh/):
+
   ```bash
   brew install tesseract poppler python@3.11
   ```
 
 - **Linux (Ubuntu / Debian / Linux Mint)**:
   Install system packages using `apt`:
+
   ```bash
   sudo apt update && sudo apt install -y \
       tesseract-ocr \
@@ -269,6 +315,7 @@ The ingestion pipeline requires `tesseract-ocr` and `poppler-utils` for OCR and 
 After cloning/pulling the repository (`git pull origin main`), set up your Python environment:
 
 - **macOS & Linux**:
+
   ```bash
   python3 -m venv .venv
   source .venv/bin/activate
@@ -303,7 +350,7 @@ Place your documents inside `./data/` and index them:
 python main.py index
 ```
 
-*(Re-running `python main.py index` cleanly recreates the local vector collections to prevent duplicate chunks).*
+_(Re-running `python main.py index` cleanly recreates the local vector collections to prevent duplicate chunks)._
 
 #### 6. Run the Application
 

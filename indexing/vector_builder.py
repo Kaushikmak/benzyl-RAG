@@ -34,12 +34,26 @@ def load_embedding_model():
     return embedding_model
 
 
+def _safe_clear_directory(directory: str) -> None:
+    """Safely clear contents of a directory without removing the directory itself (crucial for Docker bind mounts)."""
+    if not os.path.exists(directory):
+        return
+    for item in os.listdir(directory):
+        item_path = os.path.join(directory, item)
+        try:
+            if os.path.isfile(item_path) or os.path.islink(item_path):
+                os.unlink(item_path)
+            elif os.path.isdir(item_path):
+                shutil.rmtree(item_path)
+        except Exception as e:
+            logger.warning(f"Could not remove item {item_path} during directory cleanup: {e}")
+
+
 def build_vectorstores(chunks, graph, embedding_model):
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    if os.path.exists(config.QDRANT_DIR):
-        shutil.rmtree(config.QDRANT_DIR)
+    _safe_clear_directory(config.QDRANT_DIR)
     os.makedirs(config.QDRANT_DIR, exist_ok=True)
 
     batch_size = getattr(config, "EMBED_BATCH_SIZE", 8)

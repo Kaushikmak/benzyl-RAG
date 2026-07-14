@@ -51,7 +51,11 @@ class FileAgent:
         return resolved_target
 
     def _sanitize_path(self, filename: str) -> str:
-        """Sanitize filename to prevent path traversal outside workspace root."""
+        """Sanitize filename to prevent path traversal outside workspace root and route to persistent outputs directory if available."""
+        if not os.path.isabs(filename) and not os.path.dirname(filename):
+            outputs_dir = os.path.join(self.workspace_root, "outputs")
+            if os.path.exists(outputs_dir) and os.path.isdir(outputs_dir):
+                filename = os.path.join("outputs", filename)
         return self.validate_target_path(filename, whitelist_root=self.workspace_root)
 
     def parse_intent(self, query: str) -> Optional[Dict[str, Any]]:

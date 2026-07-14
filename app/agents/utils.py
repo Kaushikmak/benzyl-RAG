@@ -29,14 +29,29 @@ def atomic_write_file(target_path: str, content: str, workspace_root: Optional[s
             os.fsync(f.fileno())
         try:
             os.replace(tmp_path, abs_target)
-        except (PermissionError, FileExistsError):
+        except (PermissionError, FileExistsError, OSError) as replace_err:
             if os.path.exists(abs_target):
                 try:
                     os.remove(abs_target)
+                    os.replace(tmp_path, abs_target)
                 except Exception:
                     pass
-            os.replace(tmp_path, abs_target)
-        logger.info("Atomic write complete: %s (%d bytes)", abs_target, len(content.encode("utf-8")))
+            if not os.path.exists(abs_target) or os.path.exists(tmp_path):
+                # Fallback: cross-device link (EXDEV) or Docker bind-mount rename failure
+                logger.warning(
+                    "Atomic rename failed (%s). Falling back to direct truncation write for %s",
+                    replace_err, abs_target
+                )
+                with open(abs_target, "w", encoding="utf-8") as f:
+                    f.write(content)
+                    f.flush()
+                    os.fsync(f.fileno())
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
+        logger.info("Write complete: %s (%d bytes)", abs_target, len(content.encode("utf-8")))
         return abs_target
     except Exception as e:
         if os.path.exists(tmp_path):

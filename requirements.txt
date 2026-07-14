@@ -4,6 +4,7 @@ langchain-huggingface
 langchain-chroma
 langchain-qdrant
 langchain-text-splitters
+langgraph>=0.2.0
 qdrant-client
 chromadb
 sentence-transformers
